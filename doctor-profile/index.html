@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Doctor Profile</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand brand-clickable" id="backToDoctorBtn">
+          <div class="brand-logo" id="sidebarAvatar">D</div>
+          <div class="brand-text">
+            <h2 id="sidebarName">Doctor Panel</h2>
+            <p id="sidebarSubtitle">Rehab Monitoring</p>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-menu">
+        <button class="menu-link active">Profile</button>
+        <button class="menu-link" id="goDoctorDashboardBtn">Dashboard</button>
+        <button class="menu-link" id="goGameBtn">Game</button>
+        <button class="menu-link danger" id="logoutBtn">Шығу</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <section class="hero-card">
+        <div class="hero-left">
+          <div class="hero-avatar-wrap">
+            <div class="hero-avatar" id="heroAvatar">D</div>
+            <label class="avatar-upload-btn" for="avatarInput">Фото өзгерту</label>
+            <input type="file" id="avatarInput" accept="image/*" hidden />
+          </div>
+
+          <div class="hero-info">
+            <div class="hero-badges">
+              <span class="badge badge-main">Doctor</span>
+              <span class="badge badge-soft" id="doctorEmailMini">email</span>
+            </div>
+
+            <h1 id="doctorFullNameText">Doctor Profile</h1>
+            <p class="hero-subtitle" id="doctorRoleText">doctor account settings</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <div class="stat-card">
+          <span>Total Patients</span>
+          <h3 id="statPatients">0</h3>
+          <small>Пациенттер саны</small>
+        </div>
+
+        <div class="stat-card">
+          <span>Total Sessions</span>
+          <h3 id="statSessions">0</h3>
+          <small>Жалпы сессия</small>
+        </div>
+
+        <div class="stat-card">
+          <span>Best Score</span>
+          <h3 id="statBestScore">0</h3>
+          <small>Ең жоғары нәтиже</small>
+        </div>
+
+        <div class="stat-card">
+          <span>Role</span>
+          <h3 id="statRole">doctor</h3>
+          <small>Қолданушы рөлі</small>
+        </div>
+      </section>
+
+      <section class="profile-grid">
+        <div class="profile-card">
+          <div class="card-head">
+            <div>
+              <h3>Account & Security</h3>
+              <p>Логин, рөл және профиль</p>
+            </div>
+            <button class="edit-btn" id="openPersonalModalBtn">Edit Profile</button>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-box">
+              <span>Логин</span>
+              <strong id="infoUsername">-</strong>
+            </div>
+
+            <div class="info-box">
+              <span>Role</span>
+              <strong id="infoRole">doctor</strong>
+            </div>
+
+            <div class="info-box">
+              <span>Аты-жөні</span>
+              <strong id="infoFullName">-</strong>
+            </div>
+
+            <div class="info-box">
+              <span>Email</span>
+              <strong id="infoEmail">-</strong>
+            </div>
+
+            <div class="info-box">
+              <span>Телефон</span>
+              <strong id="infoPhone">-</strong>
+            </div>
+
+            <div class="info-box">
+              <span>Мамандығы</span>
+              <strong id="infoSpecialty">-</strong>
+            </div>
+
+            <div class="info-box full">
+              <span>Жұмыс орны</span>
+              <strong id="infoWorkplace">-</strong>
+            </div>
+
+            <div class="info-box full">
+              <span>Өзі туралы</span>
+              <strong id="infoBio">-</strong>
+            </div>
+
+            <div class="info-box full">
+              <span>Пароль</span>
+              <strong>••••••••</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay hidden" id="personalModal">
+    <div class="profile-modal">
+      <div class="modal-top">
+        <div>
+          <p class="modal-breadcrumb">Doctor Profile / Account & Security</p>
+          <h2>Профильді өзгерту</h2>
+        </div>
+        <button class="modal-close" id="closePersonalModalBtn">✕</button>
+      </div>
+
+      <div class="modal-form">
+        <label>Аты-жөні</label>
+        <input type="text" id="fullName" placeholder="Аты-жөні" />
+
+        <div class="two-fields">
+          <div class="field-wrap">
+            <label>Email</label>
+            <input type="email" id="email" placeholder="Email" />
+          </div>
+          <div class="field-wrap">
+            <label>Телефон</label>
+            <input type="text" id="phone" placeholder="Телефон" />
+          </div>
+        </div>
+
+        <div class="two-fields">
+          <div class="field-wrap">
+            <label>Мамандығы</label>
+            <input type="text" id="specialty" placeholder="Мамандығы" />
+          </div>
+          <div class="field-wrap">
+            <label>Жұмыс орны</label>
+            <input type="text" id="workplace" placeholder="Клиника / орталық" />
+          </div>
+        </div>
+
+        <label>Өзі туралы</label>
+        <textarea id="bio" placeholder="Қысқаша ақпарат"></textarea>
+
+        <label>Жаңа пароль</label>
+        <input type="password" id="newPassword" placeholder="Жаңа пароль" />
+
+        <div class="modal-actions">
+          <button class="cancel-btn" id="cancelPersonalModalBtn">Бас тарту</button>
+          <button class="save-btn" id="savePersonalBtn">Сақтау</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

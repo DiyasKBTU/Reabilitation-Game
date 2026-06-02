@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+<meta charset="UTF-8">
+<title>2-ойын - ESP Car</title>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+body{margin:0;overflow:hidden;background:#00bfff;font-family:Arial,sans-serif}
+canvas{display:block}
+#ui{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:20;background:rgba(0,0,0,.25)}
+#ui .box{text-align:center;color:white;background:rgba(0,0,0,.55);padding:28px;border-radius:22px}
+button{font-size:18px;padding:13px 24px;border:none;border-radius:12px;cursor:pointer;font-weight:900}
+.play-btn{background:#00ff88}
+#backBtn{position:absolute;top:14px;right:14px;z-index:30;color:white;background:rgba(0,0,0,.7)}
+#speed,#loadStatus,#mapInfo{position:absolute;left:14px;z-index:30;color:white;background:rgba(0,0,0,.65);padding:10px 14px;border-radius:9px;font-weight:800}
+#speed{top:14px}
+#loadStatus{top:62px;font-size:13px;max-width:560px}
+#mapInfo{top:105px;font-size:13px;display:none}
+#settingsBtn{position:absolute;top:150px;left:14px;z-index:35;background:#8b5cf6;color:white}
+#settingsPanel{position:absolute;top:203px;left:14px;width:360px;z-index:40;background:rgba(14,22,37,.96);color:white;border-radius:20px;padding:16px}
+.hidden{display:none!important}
+.settings-row{display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;margin-bottom:9px}
+.settings-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.green{background:#10b981;color:white}
+.red{background:#ef4444;color:white}
+.orange{background:#f59e0b;color:white}
+.blue{background:#3b82f6;color:white}
+#help{position:absolute;bottom:14px;left:14px;z-index:30;color:white;background:rgba(0,0,0,.65);padding:10px 14px;border-radius:9px;font-size:14px;line-height:1.45}
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+  <div class="box">
+    <h1>2-ОЙЫН</h1>
+    <p>ESP: Pitch - алға/артқа, Roll - оңға/солға</p>
+    <p>Алдымен BLE қос → CALIB бас</p>
+    <button class="play-btn" onclick="startGame()">▶ PLAY</button>
+  </div>
+</div>
+
+<div id="speed">Speed: 0 km/h</div>
+<div id="loadStatus">Модельдер жүктелуде...</div>
+<div id="mapInfo">Карта шетіне жеттің</div>
+
+<button id="settingsBtn">Настройка</button>
+<button id="backBtn">← 1-ойынға қайту</button>
+
+<div id="settingsPanel" class="hidden">
+  <div class="settings-row"><span>BLE күйі</span><strong id="bleState">Қосылмаған</strong></div>
+  <div class="settings-row"><span>Yaw</span><strong id="yawVal">0.0</strong></div>
+  <div class="settings-row"><span>Pitch</span><strong id="pitchVal">0.0</strong></div>
+  <div class="settings-row"><span>Roll</span><strong id="rollVal">0.0</strong></div>
+
+  <div class="settings-actions">
+    <button id="connectBtn" class="green">BLE қосу</button>
+    <button id="disconnectBtn" class="red">Өшіру</button>
+    <button id="calibBtn" class="orange">CALIB</button>
+    <button id="zeroBtn" class="blue">RESET</button>
+  </div>
+</div>
+
+<div id="help">
+  ESP басқару:<br>
+  CALIB — қазіргі қалыпты 0 қылады<br>
+  Pitch алға — жай жүреді<br>
+  Pitch артқа — артқа жүреді<br>
+  Roll оң/сол — бұрылады
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const API = "http://localhost:5000";
+const token = localStorage.getItem("token");
+const role = localStorage.getItem("role") || "patient";
+let selectedPatientId = localStorage.getItem("selectedPatientId") || null;
+if (!token) window.location.href = "../login/index.html";
+
+document.getElementById("backBtn").onclick = () => {
+  saveSession();
+  window.location.href = "../game/index.html";
+};
+document.getElementById("settingsBtn").onclick = () => {
+  document.getElementById("settingsPanel").classList.toggle("hidden");
+};
+
+let started = false;
+let gameStartTime = 0;
+let sessionSaved = false;
+let distanceScore = 0;
+let movementCount = 0;
+let minAngle = 0;
+let maxAngle = 0;
+
+window.startGame = () => {
+  started = true;
+  sessionSaved = false;
+  gameStartTime = Date.now();
+  distanceScore = 0;
+  movementCount = 0;
+  minAngle = 0;
+  maxAngle = 0;
+  document.getElementById("ui").style.display = "none";
+};
+
+const loadStatus = document.getElementById("loadStatus");
+const mapInfo = document.getElementById("mapInfo");
+
+function setStatus(text){ loadStatus.textContent = text; }
+
+function showMapInfo(){
+  mapInfo.style.display = "block";
+  clearTimeout(showMapInfo.timer);
+  showMapInfo.timer = setTimeout(() => {
+    mapInfo.style.display = "none";
+  }, 700);
+}
+
+
+/* ================= COLLISION ================= */
+
+const collisionBoxes = [];
+const tempCarBox = new THREE.Box3();
+const tempBoxSize = new THREE.Vector3();
+
+function addCollisionObject(obj){
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  if(box.isEmpty()) return;
+
+  box.getSize(tempBoxSize);
+
+  // Жер, жол, өте үлкен біріккен mesh және ұсақ детальдар collision-ға кірмесін.
+  // Бұлар кірсе машина орнында дірілдеп, жүрмей қалады.
+  if(tempBoxSize.y < 3) return;
+  if(tempBoxSize.x > 260 || tempBoxSize.z > 260) return;
+  if(tempBoxSize.x < 2 || tempBoxSize.z < 2) return;
+
+  // Үйдің қорабын сәл кішірейтеміз, сонда бұрышта ілініп дірілдемейді.
+  box.expandByScalar(-1.2);
+  if(!box.isEmpty()) collisionBoxes.push(box.clone());
+}
+
+function hitBuilding(nextPos){
+  if(!car || collisionBoxes.length === 0) return false;
+
+  // Машинаның өзін қозғалтпаймыз. Тек келесі орынға кішкентай hitbox қоямыз.
+  // Осылай камера дірілдемейді және машина өз-өзінен бұрылмайды.
+  tempCarBox.setFromCenterAndSize(
+    new THREE.Vector3(nextPos.x, 1.0, nextPos.z),
+    new THREE.Vector3(1.8, 1.6, 3.2)
+  );
+
+  return collisionBoxes.some(box => tempCarBox.intersectsBox(box));
+}
+
+/* ================= BLE ================= */
+
+const SERVICE_UUID = "12345678-1234-1234-1234-123456789abc";
+const DATA_UUID = "abcd1234-ab12-ab12-ab12-abcdef123456";
+const CALIB_UUID = "abcd1235-ab12-ab12-ab12-abcdef123456";
+
+let bleDevice = null;
+let calibChar = null;
+
+const ble = {
+  connected:false,
+  yaw:0,
+  pitch:0,
+  roll:0,
+  smoothYaw:0,
+  smoothPitch:0,
+  smoothRoll:0
+};
+
+// ✅ CALIB басқандағы бастапқы қалып
+let pitchBase = 0;
+let rollBase = 0;
+
+const bleStateEl = document.getElementById("bleState");
+const yawValEl = document.getElementById("yawVal");
+const pitchValEl = document.getElementById("pitchVal");
+const rollValEl = document.getElementById("rollVal");
+
+function setBleStatus(text){ bleStateEl.textContent = text; }
+
+async function saveSession(){
+  if(sessionSaved || !started) return;
+  sessionSaved = true;
+
+  if(role !== "doctor" && role !== "admin"){
+    console.log("Patient role: 2-game session базаға сақталмайды");
+    return;
+  }
+
+  if(!selectedPatientId){
+    console.warn("Пациент таңдалмаған");
+    return;
+  }
+
+  const durationSec = Math.floor((Date.now() - gameStartTime) / 1000);
+  const rangeOfMotion = Math.abs(maxAngle - minAngle);
+  const strengthIndex = Math.round((Math.abs(ble.smoothPitch - pitchBase) + Math.abs(ble.smoothRoll - rollBase) + Math.abs(speed * 100)) * 10) / 10;
+  const score = Math.max(0, Math.round(distanceScore));
+
+  try{
+    const res = await fetch(`${API}/api/session`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        Authorization:`Bearer ${token}`
+      },
+      body: JSON.stringify({
+        patientId: selectedPatientId,
+        yaw: ble.smoothYaw,
+        pitch: ble.smoothPitch - pitchBase,
+        roll: ble.smoothRoll - rollBase,
+        score,
+        durationSec,
+        level: 2,
+        gameType:"game2",
+        gameName:"2-ойын ESP Car",
+        minAngle,
+        maxAngle,
+        rangeOfMotion,
+        strengthIndex,
+        enduranceSec: durationSec,
+        movementCount,
+        rawSnapshot:`GAME2|${ble.smoothYaw},${ble.smoothPitch},${ble.smoothRoll}`
+      })
+    });
+
+    const data = await res.json();
+    console.log("GAME 2 SESSION SAVED:", data);
+  }catch(e){
+    console.error("GAME 2 SESSION SAVE ERROR", e);
+    sessionSaved = false;
+  }
+}
+
+window.addEventListener("beforeunload", () => {
+  saveSession();
+});
+
+function normalizeAngle(v){
+  while(v > 180) v -= 360;
+  while(v < -180) v += 360;
+  return v;
+}
+
+function updateBleUI(){
+  yawValEl.textContent = ble.smoothYaw.toFixed(1);
+  pitchValEl.textContent = (ble.smoothPitch - pitchBase).toFixed(1);
+  rollValEl.textContent = (ble.smoothRoll - rollBase).toFixed(1);
+}
+
+function handleIMUData(event){
+  const raw = new TextDecoder().decode(event.target.value);
+  const parts = raw.split(",").map(Number);
+
+  if(parts.length !== 3 || parts.some(Number.isNaN)) return;
+
+  ble.yaw = normalizeAngle(parts[0]);
+  ble.pitch = parts[1];
+  ble.roll = parts[2];
+
+  ble.smoothYaw = ble.smoothYaw * 0.88 + ble.yaw * 0.12;
+  ble.smoothPitch = ble.smoothPitch * 0.88 + ble.pitch * 0.12;
+  ble.smoothRoll = ble.smoothRoll * 0.88 + ble.roll * 0.12;
+
+  updateBleUI();
+}
+
+async function connectBLE(){
+  try{
+    setBleStatus("Қосылуда...");
+
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters:[{ name:"ESP32-C3-IMU" }],
+      optionalServices:[SERVICE_UUID]
+    });
+
+    bleDevice.addEventListener("gattserverdisconnected", () => {
+      ble.connected = false;
+      setBleStatus("Қосылмаған");
+    });
+
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    const dataChar = await service.getCharacteristic(DATA_UUID);
+    calibChar = await service.getCharacteristic(CALIB_UUID);
+
+    await dataChar.startNotifications();
+    dataChar.addEventListener("characteristicvaluechanged", handleIMUData);
+
+    ble.connected = true;
+    setBleStatus("Қосылды");
+  }catch(e){
+    console.error(e);
+    setBleStatus("Қате");
+  }
+}
+
+async function disconnectBLE(){
+  try{
+    if(bleDevice?.gatt?.connected) bleDevice.gatt.disconnect();
+    ble.connected = false;
+    setBleStatus("Қосылмаған");
+  }catch(e){
+    console.error(e);
+  }
+}
+
+async function sendCommand(command){
+  if(!calibChar){
+    setBleStatus("Алдымен BLE қос");
+    return;
+  }
+
+  try{
+    await calibChar.writeValue(new TextEncoder().encode(command));
+    setBleStatus(command + " жіберілді");
+  }catch(e){
+    console.error(e);
+  }
+}
+
+document.getElementById("connectBtn").onclick = connectBLE;
+document.getElementById("disconnectBtn").onclick = disconnectBLE;
+
+document.getElementById("calibBtn").onclick = () => {
+  pitchBase = ble.smoothPitch;
+  rollBase = ble.smoothRoll;
+  updateBleUI();
+  sendCommand("CALIB");
+};
+
+document.getElementById("zeroBtn").onclick = () => {
+  pitchBase = ble.smoothPitch;
+  rollBase = ble.smoothRoll;
+  updateBleUI();
+  sendCommand("RESET_YAW");
+};
+
+/* ================= THREE ================= */
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x00bfff);
+scene.fog = new THREE.Fog(0x87ceeb, 250, 4200);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 5000);
+camera.position.set(0, 5, -12);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.3);
+sun.position.set(300, 500, 250);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(5000, 5000),
+  new THREE.MeshStandardMaterial({ color:0x1f8b4c })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+function createRoad(x,z,w,h){
+  const road = new THREE.Mesh(
+    new THREE.PlaneGeometry(w,h),
+    new THREE.MeshStandardMaterial({ color:0x2b2b2b })
+  );
+  road.rotation.x = -Math.PI / 2;
+  road.position.set(x,0.03,z);
+  scene.add(road);
+}
+
+createRoad(0,0,3000,100);
+createRoad(0,0,100,3000);
+createRoad(500,0,2500,60);
+createRoad(-500,0,2500,60);
+createRoad(0,500,60,2500);
+createRoad(0,-500,60,2500);
+
+function createFallbackCar(){
+  const group = new THREE.Group();
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4,0.7,4.2),
+    new THREE.MeshStandardMaterial({ color:0xff3333 })
+  );
+  body.position.y = 0.6;
+  group.add(body);
+
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.7,0.7,1.8),
+    new THREE.MeshStandardMaterial({ color:0xeeeeee })
+  );
+  cabin.position.set(0,1.15,-0.2);
+  group.add(cabin);
+
+  const wheelMat = new THREE.MeshStandardMaterial({ color:0x111111 });
+
+  [
+    [-1.25,0.35,1.35],
+    [1.25,0.35,1.35],
+    [-1.25,0.35,-1.35],
+    [1.25,0.35,-1.35]
+  ].forEach(p => {
+    const wheel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35,0.35,0.25,24),
+      wheelMat
+    );
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(...p);
+    group.add(wheel);
+  });
+
+  return group;
+}
+
+function createFallbackCity(){
+  const mat1 = new THREE.MeshStandardMaterial({ color:0x8aa0b5 });
+  const mat2 = new THREE.MeshStandardMaterial({ color:0xb6c2d1 });
+
+  for(let i=-900;i<=900;i+=180){
+    for(let j=-900;j<=900;j+=180){
+      if(Math.abs(i)<130 || Math.abs(j)<130) continue;
+      if(Math.random()<0.35) continue;
+
+      const h = 60 + Math.random() * 190;
+
+      const b = new THREE.Mesh(
+        new THREE.BoxGeometry(70 + Math.random()*45, h, 70 + Math.random()*45),
+        Math.random() > 0.5 ? mat1 : mat2
+      );
+
+      b.position.set(i, h/2, j);
+      scene.add(b);
+      addCollisionObject(b);
+    }
+  }
+}
+
+createFallbackCity();
+
+let car = createFallbackCar();
+car.position.set(0,0,0);
+scene.add(car);
+
+const loader = new GLTFLoader();
+
+loader.load("./w124.glb", (gltf) => {
+  scene.remove(car);
+
+  car = gltf.scene;
+  car.scale.set(1.5,1.5,1.5);
+  car.position.set(0,0,0);
+
+  scene.add(car);
+  setStatus("Машина жүктелді. City жүктелуде...");
+}, undefined, () => {
+  setStatus("w124.glb ашылмады. Fallback машина көрсетілді.");
+});
+
+loader.load("./city.glb", (gltf) => {
+  const city = gltf.scene;
+
+  city.scale.set(1,1,1);
+  city.position.set(0,0.2,0);
+
+  city.traverse(child => {
+    if(child.isMesh && child.material){
+      child.material.needsUpdate = true;
+      if(child.material.map){
+        child.material.map.colorSpace = THREE.SRGBColorSpace;
+      }
+    }
+  });
+
+  scene.add(city);
+
+  city.updateMatrixWorld(true);
+  city.traverse(child => {
+    if(child.isMesh){
+      addCollisionObject(child);
+    }
+  });
+
+  setStatus("Дайын ✅");
+  setTimeout(() => loadStatus.style.display = "none", 1800);
+}, undefined, () => {
+  setStatus("city.glb ашылмады. Fallback қала көрсетілді.");
+});
+
+/* ================= CONTROL ================= */
+
+const keys = {};
+
+let speed = 0;
+let targetSpeed = 0;
+
+// жай жүру
+let maxSpeed = 0.70;
+let reverseSpeed = -0.35;
+
+let keyboardAccel = 0.008;
+let friction = 0.96;
+
+let rotSpeed = 0.012;
+
+const pitchDeadZone = 0.3;
+const rollDeadZone = 2;
+
+const pitchMax = 38;
+const rollMax = 38;
+
+// Егер оң/сол керісінше болса -1 қыл
+let steerInvert = 1;
+
+let drift = 0;
+let cameraShake = 0;
+
+const mapLimit = 900;
+
+function clamp(value, min, max){
+  return Math.max(min, Math.min(max, value));
+}
+
+function isOutsideMap(pos){
+  return (
+    pos.x < -mapLimit ||
+    pos.x > mapLimit ||
+    pos.z < -mapLimit ||
+    pos.z > mapLimit
+  );
+}
+
+function updateCar(){
+  if(!car || !started) return;
+
+  if(ble.connected){
+    const pitch = ble.smoothPitch - pitchBase;
+    const roll = ble.smoothRoll - rollBase;
+
+    if(Math.abs(pitch) > pitchDeadZone){
+      const pitchPower = clamp(pitch / pitchMax, -1, 1);
+      targetSpeed = pitchPower * maxSpeed;
+    }else{
+      targetSpeed = 0;
+    }
+
+    // өте жұмсақ газ
+    speed += (targetSpeed - speed) * 0.012;
+
+    if(Math.abs(speed) < 0.005) speed = 0;
+    speed = clamp(speed, reverseSpeed, maxSpeed);
+
+    if(Math.abs(roll) > rollDeadZone){
+      const steer = clamp(roll / rollMax, -1, 1);
+      const direction = speed < -0.04 ? -1 : 1;
+
+      car.rotation.y += steer * rotSpeed * steerInvert * direction;
+      drift = steer * Math.abs(speed) * 0.08;
+    }
+  }else{
+    if(keys["w"] || keys["arrowup"]){
+      speed += keyboardAccel;
+    }else if(keys["s"] || keys["arrowdown"]){
+      speed -= keyboardAccel;
+    }else{
+      speed *= friction;
+      if(Math.abs(speed) < 0.005) speed = 0;
+    }
+
+    speed = clamp(speed, reverseSpeed, maxSpeed);
+
+    if(keys["a"] || keys["arrowleft"]){
+      car.rotation.y += rotSpeed;
+      drift = -Math.abs(speed) * 0.08;
+    }
+
+    if(keys["d"] || keys["arrowright"]){
+      car.rotation.y -= rotSpeed;
+      drift = Math.abs(speed) * 0.08;
+    }
+  }
+
+  drift *= 0.9;
+
+  const dir = new THREE.Vector3(0,0,1);
+  dir.applyQuaternion(car.quaternion);
+  dir.y = 0;
+  dir.normalize();
+
+  const nextPos = car.position.clone().add(dir.multiplyScalar(speed));
+
+  if(hitBuilding(nextPos)){
+    speed = 0;
+    drift = 0;
+    cameraShake = 0;
+    showMapInfo();
+    return;
+  }
+
+  if(isOutsideMap(nextPos)){
+    speed = 0;
+    cameraShake = 0.12;
+    showMapInfo();
+    return;
+  }
+
+  distanceScore += Math.abs(speed) * 2.5;
+  movementCount += Math.abs(speed) > 0.02 ? 1 : 0;
+  const activeAngle = ble.connected ? (Math.abs(ble.smoothPitch - pitchBase) >= Math.abs(ble.smoothRoll - rollBase) ? ble.smoothPitch - pitchBase : ble.smoothRoll - rollBase) : speed * 50;
+  minAngle = Math.min(minAngle, activeAngle);
+  maxAngle = Math.max(maxAngle, activeAngle);
+
+  car.position.copy(nextPos);
+}
+
+function updateCamera(){
+  if(!car) return;
+
+  const dir = new THREE.Vector3(0,0,1);
+  dir.applyQuaternion(car.quaternion);
+  dir.y = 0;
+  dir.normalize();
+
+  const side = new THREE.Vector3(1,0,0);
+  side.applyQuaternion(car.quaternion);
+  side.y = 0;
+  side.normalize();
+
+  const speedFactor = Math.min(Math.abs(speed) / maxSpeed, 1);
+
+  const cameraDistance = 8 + speedFactor * 2.2;
+  const cameraHeight = 3.2 + speedFactor * 0.5;
+
+  const shakeX = (Math.random() - 0.5) * cameraShake;
+  const shakeY = (Math.random() - 0.5) * cameraShake;
+
+  const targetCameraPos = car.position
+    .clone()
+    .add(dir.clone().multiplyScalar(-cameraDistance))
+    .add(side.clone().multiplyScalar(0.55 + drift))
+    .add(new THREE.Vector3(shakeX, cameraHeight + shakeY, 0));
+
+  camera.position.lerp(targetCameraPos, 0.08);
+
+  const lookTarget = car.position
+    .clone()
+    .add(dir.clone().multiplyScalar(8))
+    .add(new THREE.Vector3(0,1.4,0));
+
+  camera.lookAt(lookTarget);
+
+  cameraShake *= 0.85;
+}
+
+function updateSpeedUI(){
+  document.getElementById("speed").innerText =
+    `Speed: ${Math.abs(speed * 18).toFixed(0)} km/h`;
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+
+  updateCar();
+  updateCamera();
+  updateSpeedUI();
+
+  renderer.render(scene,camera);
+}
+
+animate();
+
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>

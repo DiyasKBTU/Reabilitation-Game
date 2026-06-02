@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="dashboard">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">A</div>
+        <div>
+          <h2>AdminJS</h2>
+          <p>Control Panel</p>
+        </div>
+      </div>
+
+      <nav class="menu">
+        <button class="menu-item active" data-view="overview">Dashboard</button>
+        <button class="menu-item" data-view="users">Users</button>
+        <button class="menu-item" data-view="patients">Patients</button>
+        <button class="menu-item" data-view="sessions">Sessions</button>
+        <button class="menu-item" data-view="access">Access Control</button>
+        <button class="menu-item" id="goGameBtn">Game</button>
+        <button class="menu-item danger" id="logoutBtn">Шығу</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1>Admin Dashboard</h1>
+          <p>Пайдаланушылар, доступ және база бақылауы</p>
+        </div>
+
+        <div class="topbar-right">
+          <input class="search" type="text" placeholder="Search..." id="searchInput" />
+          <div class="avatar">A</div>
+        </div>
+      </header>
+
+      <section id="overviewView" class="view active-view">
+        <div class="stats-grid">
+          <div class="stat-card primary">
+            <span>Total Users</span>
+            <h3 id="totalUsers">0</h3>
+            <small>Жүйедегі қолданушылар</small>
+          </div>
+
+          <div class="stat-card">
+            <span>Total Doctors</span>
+            <h3 id="totalDoctors">0</h3>
+            <small>Doctor role</small>
+          </div>
+
+          <div class="stat-card">
+            <span>Total Patients</span>
+            <h3 id="totalPatients">0</h3>
+            <small>Пациент саны</small>
+          </div>
+
+          <div class="stat-card">
+            <span>Total Sessions</span>
+            <h3 id="totalSessions">0</h3>
+            <small>Ойын/реабилитация сессиялары</small>
+          </div>
+        </div>
+
+        <div class="content-grid">
+          <div class="panel large-panel">
+            <div class="panel-head">
+              <h3>System Overview</h3>
+              <span class="badge">Live</span>
+            </div>
+            <div class="fake-chart">
+              <div class="line line-blue"></div>
+              <div class="line line-pink"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Quick Access</h3>
+            </div>
+            <div class="quick-actions">
+              <button class="qa-btn" id="qaUsers">Users</button>
+              <button class="qa-btn" id="qaPatients">Patients</button>
+              <button class="qa-btn" id="qaSessions">Sessions</button>
+              <button class="qa-btn" id="qaAccess">Access</button>
+            </div>
+          </div>
+
+          <div class="panel full-panel">
+            <div class="panel-head">
+              <h3>Recent Users</h3>
+            </div>
+            <div id="recentUsers" class="list-table"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usersView" class="view">
+        <div class="panel full-panel">
+          <div class="panel-head">
+            <h3>Users</h3>
+          </div>
+          <div id="usersTable" class="list-table"></div>
+        </div>
+      </section>
+
+      <section id="patientsView" class="view">
+        <div class="panel full-panel">
+          <div class="panel-head">
+            <h3>Patients</h3>
+          </div>
+          <div id="patientsTable" class="list-table"></div>
+        </div>
+      </section>
+
+      <section id="sessionsView" class="view">
+        <div class="panel full-panel">
+          <div class="panel-head">
+            <h3>Sessions</h3>
+          </div>
+          <div id="sessionsTable" class="list-table"></div>
+        </div>
+      </section>
+
+      <section id="accessView" class="view">
+        <div class="panel full-panel">
+          <div class="panel-head">
+            <h3>Access Control</h3>
+          </div>
+          <div id="accessTable" class="list-table"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
