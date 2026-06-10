@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>ML Debug — RehabGame FastAPI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a12;--bg2:#111120;--bg3:#1a1a2e;--border:#2a2a40;
+  --text:#e2e8f0;--muted:#64748b;
+  --good:#10b981;--warn:#f59e0b;--crit:#ef4444;--blue:#3b82f6;--purple:#8b5cf6;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;min-height:100vh}
+#wrap{max-width:960px;margin:0 auto;padding:24px 16px}
+h1{font-size:18px;font-weight:700;margin-bottom:4px}
+h2{font-size:14px;font-weight:600;margin-bottom:10px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.badge-ok  {background:#052e16;color:var(--good);border:1px solid #14532d}
+.badge-warn{background:#451a03;color:var(--warn);border:1px solid #78350f}
+.badge-crit{background:#450a0a;color:var(--crit);border:1px solid #7f1d1d}
+.badge-gray{background:var(--bg3);color:var(--muted);border:1px solid var(--border)}
+.badge-ml  {background:#2d1f4e;color:var(--purple);border:1px solid #4c1d95}
+.num{font-variant-numeric:tabular-nums;font-weight:600}
+.muted{color:var(--muted);font-size:12px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)}
+.row:last-child{border-bottom:none}
+textarea,input[type=text]{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;outline:none;font-family:Menlo,Monaco,monospace;resize:vertical}
+textarea:focus,input:focus{border-color:var(--blue)}
+button{padding:8px 16px;background:var(--blue);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:default}
+button.sec{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:8px;margin-top:8px}
+.feat-box{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.feat-val{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.feat-name{font-size:12px;font-weight:600;margin-top:3px}
+.feat-hint{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4}
+.flag-item{background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.flag-z{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.rec-item{background:var(--bg3);border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px}
+.rec-item.crit{border-color:var(--crit)}
+.rec-item.warn{border-color:var(--warn)}
+.rec-item.ok  {border-color:var(--good)}
+.status-bar{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--good)}.dot-err{background:var(--crit)}.dot-gray{background:var(--muted)}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.json-toggle{font-size:11px;color:var(--blue);cursor:pointer;text-decoration:underline;margin-top:8px;display:inline-block}
+.json-block{display:none;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:8px;font-family:Menlo,Monaco,monospace;font-size:11px;color:#94a3b8;white-space:pre-wrap;overflow-x:auto;max-height:300px;overflow-y:auto}
+.json-block.open{display:block}
+.tab-bar{display:flex;gap:4px;margin-bottom:16px}
+.tab{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;border:1px solid transparent;color:var(--muted);background:none}
+.tab.active{background:var(--bg2);color:var(--text);border-color:var(--border)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.explain{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:12px}
+.explain strong{color:var(--text)}
+label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <h1>🧠 ML Debug</h1>
+  <p class="sub">Напрямую к FastAPI (localhost:8000) — без Node.js бэкенда, без авторизации</p>
+
+  <!-- Status bar -->
+  <div class="status-bar" id="sbar">
+    <div class="dot dot-gray" id="sdot"></div>
+    <span id="stxt">Проверяю подключение к ml-service...</span>
+    <span style="margin-left:auto;color:var(--muted);font-size:11px" id="sdetail"></span>
+  </div>
+
+  <!-- Input section -->
+  <div class="card">
+    <h2>Входные данные</h2>
+
+    <div class="tab-bar">
+      <button class="tab active" onclick="switchTab('paste',this)">Вставить JSON</button>
+      <button class="tab" onclick="switchTab('file',this)">Загрузить файл</button>
+      <button class="tab" onclick="switchTab('example',this)">Пример данных</button>
+    </div>
+
+    <div class="tab-panel active" id="tab-paste">
+      <div class="explain">
+        <strong>Формат:</strong> массив IMU-точек от ESP32.
+        Каждая точка: <code>{"t": миллисекунды_от_старта, "r": roll, "p": pitch, "y": yaw}</code><br>
+        Или просто <code>[{"t":0,"r":5.2,"p":-3.1,"y":12.0}, ...]</code>
+        Можно вставить данные из <a href="../../tools/imu-recorder/" style="color:var(--blue)">IMU Recorder</a> или <a href="../../tools/imu-simulator/" style="color:var(--blue)">Simulator</a>.
+      </div>
+      <label>IMU time-series JSON</label>
+      <textarea id="json-input" rows="6" placeholder='[{"t":0,"r":5.2,"p":-3.1,"y":12.0},{"t":200,"r":8.1,"p":-2.8,"y":11.5},...]'></textarea>
+    </div>
+
+    <div class="tab-panel" id="tab-file">
+      <div class="explain">
+        Загрузи JSON-файл из <strong>IMU Recorder</strong> или <strong>Simulator</strong>.
+        Файл должен содержать массив IMU-точек или объект <code>{"imuTimeSeries": [...]}</code>.
+      </div>
+      <input type="file" id="file-input" accept=".json" onchange="loadFile(this)" style="color:var(--text);font-size:13px;padding:4px 0">
+    </div>
+
+    <div class="tab-panel" id="tab-example">
+      <div class="explain">
+        Готовые примеры данных для тестирования разных сценариев.
+        Генерируются прямо в браузере — устройство не нужно.
+      </div>
+      <div class="btn-row">
+        <button class="sec" onclick="loadExample('normal')">✓ Нормальная сессия</button>
+        <button class="sec" onclick="loadExample('pain')">⚠ Болевой паттерн</button>
+        <button class="sec" onclick="loadExample('tired')">😴 Усталость</button>
+        <button class="sec" onclick="loadExample('tremor')">〰 Тремор</button>
+        <button class="sec" onclick="loadExample('asymmetry')">↔ Асимметрия</button>
+      </div>
+      <div id="example-preview" class="muted" style="font-size:11px;font-family:Menlo,Monaco,monospace"></div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+      <label style="margin:0">Ось (axis):</label>
+      <select id="axis-sel" style="width:auto;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 8px;font-size:12px">
+        <option value="r">r (roll) — game1 Space Catcher</option>
+        <option value="p">p (pitch)</option>
+        <option value="y">y (yaw)</option>
+      </select>
+    </div>
+
+    <div class="btn-row" style="margin-top:12px;margin-bottom:0">
+      <button id="run-btn" onclick="runPipeline()">▶ Запустить ML</button>
+      <button class="sec" onclick="clearAll()">Очистить</button>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="results" style="display:none">
+
+    <!-- Step 1: Features -->
+    <div class="card" id="r-features">
+      <div class="card-head">
+        <div style="width:24px;height:24px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">1</div>
+        <h2 style="margin:0">Признаки движения (featureService)</h2>
+      </div>
+      <div class="explain">
+        <strong>Что здесь:</strong> 12 чисел описывают качество движения. ML смотрит именно на них, не на сырые углы.
+        Если что-то выглядит неправильно — скажи.
+      </div>
+      <div class="feat-grid" id="feat-grid"></div>
+      <span class="json-toggle" onclick="toggleJson(this)">▶ Сырой JSON</span>
+      <div class="json-block" id="feat-json"></div>
+    </div>
+
+    <!-- Step 2: Anomaly -->
+    <div class="card" id="r-anomaly">
+      <div class="card-head">
+        <div style="width:24px;height:24px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">2</div>
+        <h2 style="margin:0">Детекция аномалий</h2>
+        <span id="anomaly-badge" class="badge badge-gray" style="margin-left:auto"></span>
+      </div>
+      <div class="explain">
+        <strong>Как работает:</strong> Сравнивает текущую сессию с историей пациента по z-оценке.
+        Без истории — только признаки, аномалий не будет (нужно минимум 3 прошлых сессии).
+        <br>Можно передать историю ниже.
+      </div>
+      <div id="anomaly-content"></div>
+      <span class="json-toggle" onclick="toggleJson(this)">▶ Сырой JSON</span>
+      <div class="json-block" id="anomaly-json"></div>
+    </div>
+
+    <!-- Step 3: Recommendations -->
+    <div class="card" id="r-recs">
+      <div class="card-head">
+        <div style="width:24px;height:24px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">3</div>
+        <h2 style="margin:0">Рекомендации</h2>
+      </div>
+      <div id="recs-content"></div>
+      <span class="json-toggle" onclick="toggleJson(this)">▶ Сырой JSON</span>
+      <div class="json-block" id="recs-json"></div>
+    </div>
+
+    <!-- Chart -->
+    <div class="card">
+      <h2>График движения (roll по времени)</h2>
+      <div style="background:var(--bg3);border-radius:8px;padding:12px">
+        <canvas id="imu-chart" height="120"></canvas>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- History panel (optional) -->
+  <div class="card">
+    <h2>История сессий (опционально)</h2>
+    <div class="explain">
+      Вставь массив прошлых сессий чтобы детектор аномалий мог сравнить текущую с ними.
+      Минимум 3 сессии. Формат: <code>[{"imuTimeSeries":[...]}, ...]</code> или массив уже готовых features.
+      <br>Если оставить пустым — аномалии не считаются (только признаки и рекомендации).
+    </div>
+    <label>История (JSON массив)</label>
+    <textarea id="history-input" rows="3" placeholder='[{"imuTimeSeries":[...]}, {"imuTimeSeries":[...]}, ...]'></textarea>
+  </div>
+
+</div>
+
+<script>
+const ML_BASE = "http://localhost:8000";
+let lastFeatures = null;
+let lastImu = null;
+let chartInst = null;
+
+// ─── Health check ─────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(ML_BASE + "/health");
+    const d = await r.json();
+    setStatus(true, `ml-service v${d.version} • режим аномалий: ${d.anomalyMode}`, d.trainedOn ? `модель: ${d.trainedOn}` : "");
+  } catch(e) {
+    setStatus(false, "ml-service недоступен. Запусти: cd ml-service && uvicorn app.main:app --reload --port 8000", "");
+  }
+}
+
+function setStatus(ok, text, detail) {
+  document.getElementById("sdot").className = "dot " + (ok ? "dot-ok" : "dot-err");
+  document.getElementById("stxt").textContent = text;
+  document.getElementById("sdetail").textContent = detail;
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(id, btn) {
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+  document.getElementById("tab-" + id).classList.add("active");
+  btn.classList.add("active");
+}
+
+// ─── File load ────────────────────────────────────────────────────────────────
+function loadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const series = Array.isArray(data) ? data : (data.imuTimeSeries || data.series || []);
+      document.getElementById("json-input").value = JSON.stringify(series, null, 2);
+      switchTab("paste", document.querySelectorAll(".tab")[0]);
+    } catch(err) { alert("Ошибка парсинга JSON: " + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+// ─── Examples ────────────────────────────────────────────────────────────────
+function loadExample(type) {
+  const series = generateExample(type);
+  document.getElementById("json-input").value = JSON.stringify(series, null, 2);
+  document.getElementById("example-preview").textContent =
+    `Сгенерировано ${series.length} точек. Скопировано в поле ввода.`;
+  switchTab("paste", document.querySelectorAll(".tab")[0]);
+}
+
+function generateExample(type) {
+  const n = 150; // ~30 секунд при 5 точек/с (запасной интервал 200мс)
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = i * 200;
+    let r, p, y;
+    switch(type) {
+      case "normal":
+        // Плавные флексия/экстензия кисти ±40°
+        r = 38 * Math.sin(2 * Math.PI * i / 25) + (Math.random() - 0.5) * 3;
+        p = 5 * Math.sin(2 * Math.PI * i / 40);
+        y = 2 * Math.sin(2 * Math.PI * i / 60);
+        break;
+      case "pain":
+        // Ограниченный ROM ±15°, рывки
+        r = 13 * Math.sin(2 * Math.PI * i / 25) + (Math.random() - 0.5) * 6;
+        p = 2 * Math.sin(2 * Math.PI * i / 40);
+        y = 1 * Math.sin(2 * Math.PI * i / 60);
+        break;
+      case "tired":
+        // Хороший ROM в начале, потом спад + паузы
+        const decay = Math.exp(-i / 80);
+        r = (40 * decay + 15 * (1 - decay)) * Math.sin(2 * Math.PI * i / 30) + (Math.random() - 0.5) * 4;
+        // Пауза каждые ~20 точек
+        if (i % 22 < 5) r = r * 0.1;
+        p = 0; y = 0;
+        break;
+      case "tremor":
+        // Нормальное движение + высокочастотный тремор
+        r = 30 * Math.sin(2 * Math.PI * i / 25) + 8 * Math.sin(2 * Math.PI * i / 3) + (Math.random() - 0.5) * 5;
+        p = 0; y = 0;
+        break;
+      case "asymmetry":
+        // Сильная асимметрия: в плюс до +45°, в минус только до −10°
+        const wave = Math.sin(2 * Math.PI * i / 25);
+        r = wave > 0 ? wave * 45 : wave * 10;
+        r += (Math.random() - 0.5) * 3;
+        p = 0; y = 0;
+        break;
+    }
+    pts.push({ t, r: parseFloat(r.toFixed(2)), p: parseFloat((p||0).toFixed(2)), y: parseFloat((y||0).toFixed(2)) });
+  }
+  return pts;
+}
+
+// ─── Pipeline ─────────────────────────────────────────────────────────────────
+async function runPipeline() {
+  const raw = document.getElementById("json-input").value.trim();
+  if (!raw) { alert("Вставь или выбери данные"); return; }
+
+  let imu;
+  try { imu = JSON.parse(raw); } catch(e) { alert("Ошибка JSON: " + e.message); return; }
+  if (!Array.isArray(imu) || !imu.length) { alert("Нужен массив IMU-точек"); return; }
+
+  // Normalize fields: accept t/r/p/y or timestamp/roll/pitch/yaw
+  imu = imu.map((pt, i) => ({
+    t: pt.t ?? pt.timestamp ?? i * 200,
+    r: pt.r ?? pt.roll  ?? 0,
+    p: pt.p ?? pt.pitch ?? 0,
+    y: pt.y ?? pt.yaw   ?? 0
+  }));
+
+  const axis = document.getElementById("axis-sel").value;
+
+  // Parse history
+  let history = [];
+  const histRaw = document.getElementById("history-input").value.trim();
+  if (histRaw) {
+    try {
+      const histData = JSON.parse(histRaw);
+      history = Array.isArray(histData) ? histData : [];
+    } catch(_) {}
+  }
+
+  const btn = document.getElementById("run-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Анализ...';
+  document.getElementById("results").style.display = "none";
+
+  try {
+    // Call /predict directly on FastAPI
+    const res = await fetch(ML_BASE + "/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imuTimeSeries: imu,
+        axis,
+        history: history.length ? history : undefined
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || JSON.stringify(err));
+    }
+
+    const data = await res.json();
+    lastFeatures = data.features;
+    lastImu = imu;
+
+    renderResults(data, imu, axis);
+    document.getElementById("results").style.display = "block";
+  } catch(e) {
+    alert("Ошибка: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "▶ Запустить ML";
+  }
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+const FEAT_META = {
+  rom:             { label: "ROM",              unit: "°",    hint: "Полный диапазон движения за сессию" },
+  durationSec:     { label: "Длительность",     unit: "с",    hint: "Сколько секунд длилась сессия" },
+  sampleCount:     { label: "Сэмплов",          unit: "",     hint: "Кол-во точек IMU" },
+  meanAbsVelocity: { label: "Ср. скорость",     unit: "°/с",  hint: "Средняя скорость движения. Падение = усталость" },
+  peakVelocity:    { label: "Пик. скорость",    unit: "°/с",  hint: "Максимальная скорость. Резерв силы" },
+  smoothnessIndex: { label: "Плавность",        unit: "%",    hint: "100% = очень плавно. Низкое = рывки/боль" },
+  tremorIndex:     { label: "Тремор",           unit: "%",    hint: "0% = нет тремора. Высокое = дрожание" },
+  symmetryIndex:   { label: "Симметрия",        unit: "",     hint: "0 = симметрично, ±1 = только одна сторона" },
+  pauseRatio:      { label: "Паузы",            unit: "%",    hint: "Доля времени без движения. Высокое = усталость" },
+  repetitions:     { label: "Повторений",       unit: "",     hint: "Полных туда-обратно движений" },
+  activeTimeSec:   { label: "Актив. время",     unit: "с",    hint: "Когда кисть двигалась (угол > 5°)" },
+  meanJerk:        { label: "Рывковость",       unit: "",     hint: "Высокое = резкие смены скорости" }
+};
+
+function renderResults(data, imu, axis) {
+  // Features
+  const f = data.features || {};
+  const grid = document.getElementById("feat-grid");
+  grid.innerHTML = "";
+  Object.entries(FEAT_META).forEach(([key, meta]) => {
+    const raw = f[key];
+    if (raw === undefined) return;
+    const isPercent = meta.unit === "%";
+    const val = isPercent ? Math.round(raw * 100) + "%" : (raw + meta.unit);
+    grid.innerHTML += `<div class="feat-box">
+      <div class="feat-val">${val}</div>
+      <div class="feat-name">${meta.label}</div>
+      <div class="feat-hint">${meta.hint}</div>
+    </div>`;
+  });
+  document.getElementById("feat-json").textContent = JSON.stringify(f, null, 2);
+
+  // Anomaly
+  const a = data.anomaly || {};
+  const abadge = {
+    normal:                 ["badge-ok",   "✓ Норма"],
+    attention:              ["badge-warn", "⚠ Внимание"],
+    critical:               ["badge-crit", "✕ Критично"],
+    insufficient_baseline:  ["badge-ml",   "⏳ Мало данных"],
+    no_data:                ["badge-gray", "— Нет данных"]
+  }[a.status] || ["badge-gray", a.status || "—"];
+
+  const ab = document.getElementById("anomaly-badge");
+  ab.className = "badge " + abadge[0];
+  ab.textContent = abadge[1];
+
+  let ahtml = `<div class="row"><span class="muted">Статус</span><span class="num">${a.status || "—"}</span></div>
+    <div class="row"><span class="muted">Anomaly score</span><span class="num">${a.anomalyScore ?? "—"}</span></div>
+    <div class="row"><span class="muted">Базовая линия</span><span class="num">${a.baselineSize ?? 0} сессий</span></div>`;
+  if (a.note) ahtml += `<p class="muted" style="margin-top:8px;font-size:12px">${a.note}</p>`;
+  if (a.flags && a.flags.length) {
+    ahtml += `<div style="margin-top:12px">`;
+    a.flags.forEach(fl => {
+      const cls = fl.severity === "critical" ? "crit" : "warn";
+      ahtml += `<div class="flag-item">
+        <div>
+          <div style="font-size:13px;font-weight:600">${fl.label}</div>
+          <div class="muted" style="margin-top:2px">${fl.text}</div>
+          <div style="display:flex;gap:12px;margin-top:4px">
+            <span class="muted">baseline: <strong style="color:var(--text)">${fl.baseline}</strong></span>
+            <span class="muted">current: <strong style="color:var(--text)">${fl.current}</strong></span>
+          </div>
+        </div>
+        <div class="flag-z" style="color:var(--${cls})">${fl.z > 0 ? "+" : ""}${fl.z}σ</div>
+      </div>`;
+    });
+    ahtml += `</div>`;
+  }
+  document.getElementById("anomaly-content").innerHTML = ahtml;
+  document.getElementById("anomaly-json").textContent = JSON.stringify(a, null, 2);
+
+  // Recommendations
+  const recs = data.recommendations || {};
+  let rhtml = "";
+  if (recs.focus) rhtml += `<p style="margin-bottom:12px;font-weight:500">${recs.focus}</p>`;
+  if (recs.weakSide && recs.weakSide.detected) {
+    rhtml += `<div class="rec-item warn"><div style="font-size:13px;font-weight:600">Слабая сторона</div><div class="muted" style="margin-top:3px">${recs.weakSide.label}</div><div class="muted">${recs.weakSide.evidence}</div></div>`;
+  }
+  (recs.items || []).forEach(item => {
+    const cls = item.severity === "critical" ? "crit" : item.severity === "attention" ? "warn" : "ok";
+    rhtml += `<div class="rec-item ${cls}">
+      <div style="font-size:13px;font-weight:600">${item.finding}</div>
+      <div class="muted" style="margin-top:4px">${item.recommendation}</div>
+      ${item.current !== undefined ? `<div class="muted" style="margin-top:4px;font-size:11px">Текущее: ${item.current}${item.unit || ""} → цель: ${item.target !== undefined ? item.target + (item.unit||"") : "—"}</div>` : ""}
+    </div>`;
+  });
+  if (recs.sessionPlan) {
+    const sp = recs.sessionPlan;
+    rhtml += `<div style="margin-top:12px;padding:10px 12px;background:var(--bg3);border-radius:8px;font-size:12px">
+      <strong>Plan следующей сессии:</strong><br>
+      Уровень нагрузки: <strong>${{increase:"↑ Увеличить",hold:"→ Держать",decrease:"↓ Снизить"}[sp.levelAdvice]||sp.levelAdvice}</strong> •
+      Целевой ROM: <strong>${sp.targetRomDeg}°</strong> •
+      Длительность: <strong>${sp.suggestedDurationSec}с</strong>
+      ${sp.weakSideExtraRepsPct > 0 ? ` • Слабая сторона: <strong>+${sp.weakSideExtraRepsPct}% повторов</strong>` : ""}
+    </div>`;
+  }
+  document.getElementById("recs-content").innerHTML = rhtml || '<p class="muted">Нет рекомендаций</p>';
+  document.getElementById("recs-json").textContent = JSON.stringify(recs, null, 2);
+
+  // Chart
+  renderChart(imu, axis);
+}
+
+function renderChart(imu, axis) {
+  const labels = imu.map((_, i) => i);
+  const values = imu.map(p => p[axis] ?? 0);
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+  chartInst = new Chart(document.getElementById("imu-chart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [{
+        label: axis + " (°)",
+        data: values,
+        borderColor: "#3b82f6",
+        backgroundColor: "rgba(59,130,246,0.06)",
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 1.5
+      }]
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#475569", maxTicksLimit: 10 }, grid: { color: "#1a1a2e" } },
+        y: { ticks: { color: "#475569" }, grid: { color: "#1a1a2e" } }
+      }
+    }
+  });
+}
+
+function clearAll() {
+  document.getElementById("json-input").value = "";
+  document.getElementById("history-input").value = "";
+  document.getElementById("results").style.display = "none";
+}
+
+function toggleJson(el) {
+  const b = el.nextElementSibling;
+  b.classList.toggle("open");
+  el.textContent = b.classList.contains("open") ? "▼ Скрыть JSON" : "▶ Сырой JSON";
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+checkHealth();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>IMU Simulator — RehabGame</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a12;--bg2:#111120;--bg3:#1a1a2e;--border:#2a2a40;--text:#e2e8f0;--muted:#64748b;--good:#10b981;--warn:#f59e0b;--blue:#3b82f6}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;padding:20px}
+#wrap{max-width:900px;margin:0 auto}
+h1{font-size:17px;font-weight:700;margin-bottom:2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+h2{font-size:13px;font-weight:600;margin-bottom:8px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+label{font-size:11px;color:var(--muted);display:block;margin-bottom:3px}
+input[type=range]{width:100%;accent-color:var(--blue);height:4px}
+.slider-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.slider-row label{min-width:60px;margin:0}
+.slider-row input[type=range]{flex:1}
+.val-badge{min-width:52px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
+button{padding:7px 14px;background:var(--blue);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:default}
+button.sec{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+button.rec{background:#064e3b;color:var(--good);border:1px solid #14532d}
+button.stop{background:#450a0a;color:#f87171;border:1px solid #7f1d1d}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.pattern-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:10px}
+.pat-btn{padding:8px 10px;font-size:12px;text-align:center;border-radius:7px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text);transition:all .15s}
+.pat-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pat-btn.active{border-color:var(--blue);background:#1e3a5f;color:var(--blue)}
+.stat-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px}
+.stat-row:last-child{border-bottom:none}
+.stat-val{font-weight:600;font-variant-numeric:tabular-nums}
+.rec-dot{width:8px;height:8px;border-radius:50%;background:var(--crit);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.chart-wrap{background:var(--bg3);border-radius:8px;padding:12px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>🎮 IMU Simulator</h1>
+  <p class="sub">Генерирует реалистичные данные движения кисти без физического устройства. Экспортируй JSON → вставь в ML Debug.</p>
+
+  <div class="row2">
+    <!-- Left: Controls -->
+    <div>
+      <!-- Pattern selector -->
+      <div class="card">
+        <h2>Паттерн движения</h2>
+        <div class="pattern-grid">
+          <div class="pat-btn active" data-pat="rehab" onclick="selectPattern(this,'rehab')">🏥 Реабилитация<br><small style="color:var(--muted)">нормальная сессия</small></div>
+          <div class="pat-btn" data-pat="pain" onclick="selectPattern(this,'pain')">⚡ Боль<br><small style="color:var(--muted)">ограниченный ROM</small></div>
+          <div class="pat-btn" data-pat="tired" onclick="selectPattern(this,'tired')">😴 Усталость<br><small style="color:var(--muted)">спад + паузы</small></div>
+          <div class="pat-btn" data-pat="tremor" onclick="selectPattern(this,'tremor')">〰 Тремор<br><small style="color:var(--muted)">дрожание</small></div>
+          <div class="pat-btn" data-pat="asymmetry" onclick="selectPattern(this,'asymmetry')">↔ Асимметрия<br><small style="color:var(--muted)">слабая сторона</small></div>
+          <div class="pat-btn" data-pat="manual" onclick="selectPattern(this,'manual')">🕹️ Вручную<br><small style="color:var(--muted)">слайдеры</small></div>
+        </div>
+      </div>
+
+      <!-- Manual controls (shown when manual pattern) -->
+      <div class="card" id="manual-card" style="display:none">
+        <h2>Ручное управление</h2>
+        <div class="slider-row">
+          <label>Roll</label>
+          <input type="range" id="sl-roll" min="-90" max="90" value="0" oninput="updateManual()">
+          <span class="val-badge" id="v-roll">0°</span>
+        </div>
+        <div class="slider-row">
+          <label>Pitch</label>
+          <input type="range" id="sl-pitch" min="-90" max="90" value="0" oninput="updateManual()">
+          <span class="val-badge" id="v-pitch">0°</span>
+        </div>
+        <div class="slider-row">
+          <label>Yaw</label>
+          <input type="range" id="sl-yaw" min="-180" max="180" value="0" oninput="updateManual()">
+          <span class="val-badge" id="v-yaw">0°</span>
+        </div>
+      </div>
+
+      <!-- Session settings -->
+      <div class="card">
+        <h2>Параметры сессии</h2>
+        <div class="slider-row">
+          <label>Длит.</label>
+          <input type="range" id="sl-dur" min="10" max="120" value="30" oninput="document.getElementById('v-dur').textContent=this.value+'с'">
+          <span class="val-badge" id="v-dur">30с</span>
+        </div>
+        <div class="slider-row">
+          <label>Шум</label>
+          <input type="range" id="sl-noise" min="0" max="20" value="3" oninput="document.getElementById('v-noise').textContent=this.value+'°'">
+          <span class="val-badge" id="v-noise">3°</span>
+        </div>
+        <div class="slider-row">
+          <label>Частота</label>
+          <input type="range" id="sl-hz" min="5" max="50" value="20" oninput="document.getElementById('v-hz').textContent=this.value+'Hz'">
+          <span class="val-badge" id="v-hz">20Hz</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Stats + Chart -->
+    <div>
+      <div class="card">
+        <h2>Превью движения</h2>
+        <div class="chart-wrap" style="margin-bottom:12px">
+          <canvas id="preview-chart" height="130"></canvas>
+        </div>
+        <div id="preview-stats">
+          <div class="stat-row"><span>Точек</span><span class="stat-val" id="st-pts">—</span></div>
+          <div class="stat-row"><span>ROM (roll)</span><span class="stat-val" id="st-rom">—</span></div>
+          <div class="stat-row"><span>Min / Max</span><span class="stat-val" id="st-minmax">—</span></div>
+          <div class="stat-row"><span>Длительность</span><span class="stat-val" id="st-dur">—</span></div>
+        </div>
+      </div>
+
+      <!-- Recording -->
+      <div class="card">
+        <h2>Запись</h2>
+        <div class="btn-row" style="margin-bottom:10px">
+          <button id="gen-btn" onclick="generateSeries()">⚡ Сгенерировать</button>
+          <button class="sec" onclick="previewSeries()">👁 Превью</button>
+        </div>
+        <div id="export-row" style="display:none">
+          <div style="padding:8px 10px;background:var(--bg3);border-radius:6px;margin-bottom:8px;font-size:12px">
+            <span style="color:var(--good)">✓</span> Сгенерировано <strong id="pt-count">0</strong> точек
+          </div>
+          <div class="btn-row">
+            <button onclick="exportJson()">📥 Скачать JSON</button>
+            <button class="sec" onclick="copyToClipboard()">📋 Копировать</button>
+            <button class="sec" onclick="openInMlDebug()">🧠 Открыть в ML Debug</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live recording -->
+  <div class="card">
+    <h2>Живая запись <small style="color:var(--muted)">(следи за движением в реальном времени)</small></h2>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button class="rec" id="live-btn" onclick="toggleLive()">⏺ Начать запись</button>
+      <span id="live-timer" style="display:none;align-items:center;gap:6px;font-size:13px;font-weight:600">
+        <div class="rec-dot"></div>
+        <span id="live-sec">0с</span>
+        <span class="muted">записано <span id="live-pts">0</span> точек</span>
+      </span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="live-chart" height="100"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPattern = "rehab";
+let generatedSeries = null;
+let liveActive = false;
+let liveBuffer = [];
+let liveInterval = null;
+let liveStart = 0;
+let liveChartInst = null;
+let previewChartInst = null;
+let liveRoll = 0, livePitch = 0, liveYaw = 0;
+let livePhase = 0;
+
+// ─── Pattern descriptions ─────────────────────────────────────────────────────
+const PATTERNS = {
+  rehab: {
+    name: "Реабилитация",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      const r = 38 * Math.sin(2*Math.PI*i/25) + (Math.random()-.5)*3;
+      return { t, r, p: 5*Math.sin(2*Math.PI*i/40), y: 2*Math.sin(2*Math.PI*i/60) };
+    }
+  },
+  pain: {
+    name: "Боль",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      return { t, r: 13*Math.sin(2*Math.PI*i/25)+(Math.random()-.5)*6, p: 2*Math.sin(2*Math.PI*i/40), y: 0 };
+    }
+  },
+  tired: {
+    name: "Усталость",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      const d = Math.exp(-i/80);
+      let r = (40*d+15*(1-d))*Math.sin(2*Math.PI*i/30)+(Math.random()-.5)*4;
+      if (i%22<5) r*=0.1;
+      return { t, r, p: 0, y: 0 };
+    }
+  },
+  tremor: {
+    name: "Тремор",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      return { t, r: 30*Math.sin(2*Math.PI*i/25)+8*Math.sin(2*Math.PI*i/3)+(Math.random()-.5)*5, p: 0, y: 0 };
+    }
+  },
+  asymmetry: {
+    name: "Асимметрия",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      const w = Math.sin(2*Math.PI*i/25);
+      return { t, r: (w>0?w*45:w*10)+(Math.random()-.5)*3, p: 0, y: 0 };
+    }
+  },
+  manual: {
+    name: "Вручную",
+    gen: (i, n, dur) => {
+      const t = i * (dur*1000/n);
+      return { t, r: liveRoll, p: livePitch, y: liveYaw };
+    }
+  }
+};
+
+function selectPattern(el, pat) {
+  document.querySelectorAll(".pat-btn").forEach(b => b.classList.remove("active"));
+  el.classList.add("active");
+  currentPattern = pat;
+  document.getElementById("manual-card").style.display = pat === "manual" ? "block" : "none";
+  previewSeries();
+}
+
+function updateManual() {
+  liveRoll  = +document.getElementById("sl-roll").value;
+  livePitch = +document.getElementById("sl-pitch").value;
+  liveYaw   = +document.getElementById("sl-yaw").value;
+  document.getElementById("v-roll").textContent  = liveRoll + "°";
+  document.getElementById("v-pitch").textContent = livePitch + "°";
+  document.getElementById("v-yaw").textContent   = liveYaw + "°";
+}
+
+// ─── Generate ─────────────────────────────────────────────────────────────────
+function buildSeries() {
+  const dur   = +document.getElementById("sl-dur").value;
+  const hz    = +document.getElementById("sl-hz").value;
+  const noise = +document.getElementById("sl-noise").value;
+  const n     = Math.round(dur * hz);
+  const pat   = PATTERNS[currentPattern];
+
+  return Array.from({length: n}, (_, i) => {
+    const pt = pat.gen(i, n, dur);
+    return {
+      t: Math.round(pt.t),
+      r: parseFloat((pt.r + (Math.random()-.5)*noise).toFixed(2)),
+      p: parseFloat((pt.p + (Math.random()-.5)*(noise*0.3)).toFixed(2)),
+      y: parseFloat((pt.y + (Math.random()-.5)*(noise*0.2)).toFixed(2))
+    };
+  });
+}
+
+function previewSeries() {
+  const s = buildSeries();
+  updateStats(s);
+  renderPreviewChart(s);
+}
+
+function generateSeries() {
+  generatedSeries = buildSeries();
+  updateStats(generatedSeries);
+  renderPreviewChart(generatedSeries);
+  document.getElementById("pt-count").textContent = generatedSeries.length;
+  document.getElementById("export-row").style.display = "block";
+}
+
+function updateStats(s) {
+  const rolls = s.map(p => p.r);
+  const min = Math.min(...rolls), max = Math.max(...rolls);
+  document.getElementById("st-pts").textContent = s.length;
+  document.getElementById("st-rom").textContent = (max-min).toFixed(1) + "°";
+  document.getElementById("st-minmax").textContent = min.toFixed(1) + "° / " + max.toFixed(1) + "°";
+  document.getElementById("st-dur").textContent = ((s[s.length-1].t - s[0].t)/1000).toFixed(1) + "с";
+}
+
+function renderPreviewChart(s) {
+  if (previewChartInst) { previewChartInst.destroy(); previewChartInst = null; }
+  previewChartInst = new Chart(document.getElementById("preview-chart"), {
+    type: "line",
+    data: {
+      labels: s.map((_,i)=>i),
+      datasets: [
+        { label:"roll", data: s.map(p=>p.r), borderColor:"#3b82f6", backgroundColor:"rgba(59,130,246,.05)", tension:.2, pointRadius:0, borderWidth:1.5 },
+        { label:"pitch",data: s.map(p=>p.p), borderColor:"#10b981", backgroundColor:"transparent", tension:.2, pointRadius:0, borderWidth:1 }
+      ]
+    },
+    options: {
+      responsive:true, animation:false,
+      plugins:{ legend:{ labels:{ color:"#64748b", boxWidth:10, font:{size:10} } } },
+      scales:{
+        x:{ticks:{color:"#475569",maxTicksLimit:8},grid:{color:"#1a1a2e"}},
+        y:{ticks:{color:"#475569"},grid:{color:"#1a1a2e"}}
+      }
+    }
+  });
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportJson() {
+  if (!generatedSeries) return;
+  const blob = new Blob([JSON.stringify(generatedSeries, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `imu_${currentPattern}_${Date.now()}.json`;
+  a.click();
+}
+
+function copyToClipboard() {
+  if (!generatedSeries) return;
+  navigator.clipboard.writeText(JSON.stringify(generatedSeries))
+    .then(() => alert("Скопировано в буфер обмена"))
+    .catch(() => alert("Ошибка копирования"));
+}
+
+function openInMlDebug() {
+  if (!generatedSeries) return;
+  sessionStorage.setItem("imu_debug_data", JSON.stringify(generatedSeries));
+  window.open("../../ml-service/debug-ui/", "_blank");
+}
+
+// ─── Live recording ───────────────────────────────────────────────────────────
+function toggleLive() {
+  if (liveActive) stopLive(); else startLive();
+}
+
+function startLive() {
+  liveActive = true;
+  liveBuffer = [];
+  liveStart = Date.now();
+  livePhase = 0;
+  document.getElementById("live-btn").textContent = "⏹ Остановить";
+  document.getElementById("live-btn").classList.remove("rec");
+  document.getElementById("live-btn").classList.add("stop");
+  document.getElementById("live-timer").style.display = "flex";
+
+  // init live chart
+  if (liveChartInst) { liveChartInst.destroy(); }
+  liveChartInst = new Chart(document.getElementById("live-chart"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label:"roll",  data:[], borderColor:"#3b82f6", tension:.2, pointRadius:0, borderWidth:1.5, backgroundColor:"rgba(59,130,246,.05)" },
+        { label:"pitch", data:[], borderColor:"#10b981", tension:.2, pointRadius:0, borderWidth:1, backgroundColor:"transparent" }
+      ]
+    },
+    options: {
+      responsive:true, animation:false,
+      plugins:{ legend:{ labels:{ color:"#64748b", boxWidth:10, font:{size:10} } } },
+      scales:{
+        x:{ticks:{color:"#475569",maxTicksLimit:8},grid:{color:"#1a1a2e"}},
+        y:{ticks:{color:"#475569"},grid:{color:"#1a1a2e"}}
+      }
+    }
+  });
+
+  const hz = +document.getElementById("sl-hz").value;
+  const intervalMs = 1000 / hz;
+  let tickI = 0;
+
+  liveInterval = setInterval(() => {
+    const t = Date.now() - liveStart;
+    const noise = +document.getElementById("sl-noise").value;
+    const pat = PATTERNS[currentPattern];
+    const n = 9999;
+    let pt = pat.gen(tickI, n, 999999);
+    pt = {
+      t,
+      r: parseFloat((pt.r + (Math.random()-.5)*noise).toFixed(2)),
+      p: parseFloat((pt.p + (Math.random()-.5)*(noise*0.3)).toFixed(2)),
+      y: parseFloat((pt.y + (Math.random()-.5)*(noise*0.2)).toFixed(2))
+    };
+    liveBuffer.push(pt);
+    tickI++;
+
+    // Update chart (rolling 200 points)
+    const ch = liveChartInst;
+    const maxPts = 200;
+    if (ch.data.labels.length > maxPts) {
+      ch.data.labels.shift();
+      ch.data.datasets[0].data.shift();
+      ch.data.datasets[1].data.shift();
+    }
+    ch.data.labels.push(tickI);
+    ch.data.datasets[0].data.push(pt.r);
+    ch.data.datasets[1].data.push(pt.p);
+    ch.update("none");
+
+    // Update timer
+    const sec = Math.floor(t/1000);
+    document.getElementById("live-sec").textContent = sec + "с";
+    document.getElementById("live-pts").textContent = liveBuffer.length;
+  }, intervalMs);
+}
+
+function stopLive() {
+  liveActive = false;
+  clearInterval(liveInterval);
+  document.getElementById("live-btn").textContent = "⏺ Начать запись";
+  document.getElementById("live-btn").classList.add("rec");
+  document.getElementById("live-btn").classList.remove("stop");
+
+  if (liveBuffer.length > 0) {
+    generatedSeries = [...liveBuffer];
+    document.getElementById("pt-count").textContent = generatedSeries.length;
+    document.getElementById("export-row").style.display = "block";
+    updateStats(generatedSeries);
+    renderPreviewChart(generatedSeries);
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+previewSeries();
+</script>
+</body>
+</html>

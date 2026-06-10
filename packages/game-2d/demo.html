@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Game 2D Demo — Space Catcher (standalone)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a12; color: #e2e8f0; font-family: -apple-system, sans-serif; overflow: hidden; }
+  #info { position: fixed; top: 12px; left: 12px; background: rgba(17,17,32,.85); border: 1px solid #2a2a40; border-radius: 8px; padding: 10px 14px; font-size: 12px; z-index: 10; }
+  #info strong { color: #60a5fa; }
+  #controls { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; z-index: 10; }
+  button { padding: 6px 12px; background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  button:hover { background: #2a4a7f; }
+  #status { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(17,17,32,.9); border: 1px solid #2a2a40; border-radius: 6px; padding: 6px 14px; font-size: 12px; color: #64748b; white-space: nowrap; }
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(5,8,22,0.88); z-index: 5; }
+  #menu h1 { font-size: 48px; color: #60a5fa; margin-bottom: 8px; }
+  #menu p  { color: #94a3b8; margin-bottom: 32px; }
+  #startBtn { font-size: 18px; padding: 14px 36px; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <div><strong>Space Catcher</strong> — standalone demo</div>
+  <div style="margin-top:4px;color:#94a3b8">Без логина · Без бэкенда</div>
+  <div style="margin-top:6px"><strong>Клавиши:</strong> A/D или ←→ двигать, R рестарт</div>
+</div>
+
+<div id="controls">
+  <button id="bleBtn">🔵 BLE</button>
+  <button id="startBtn2">▶ Старт</button>
+</div>
+
+<div id="menu">
+  <h1>Space Catcher</h1>
+  <p>Лови шары, избегай бомб. Управление: A/D или IMU (roll)</p>
+  <button id="startBtn" style="font-size:18px;padding:14px 36px">▶ Начать игру</button>
+</div>
+
+<div id="status">Загрузка...</div>
+
+<canvas id="canvas"></canvas>
+
+<script type="module">
+import { Game2DEngine } from './index.js';
+import { BleService }   from '../ble/index.js';
+
+const canvas   = document.getElementById("canvas");
+const menuEl   = document.getElementById("menu");
+const statusEl = document.getElementById("status");
+
+function setStatus(msg) { statusEl.textContent = msg; }
+
+// Подогнать canvas под окно
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ─── Движок ───────────────────────────────────────────────────────────────────
+const engine = new Game2DEngine(canvas, {
+  alpha: 0.22,
+  onGameOver: (data) => {
+    setStatus(`Game Over! Score: ${data.score} · Combo ×${data.maxCombo} · ${data.durationSec}с`);
+    console.log("SESSION DATA (не отправляется — demo режим):", data);
+  },
+  onScore: (score) => {
+    // опционально: можно обновить заголовок вкладки
+    document.title = `Score: ${score} — Space Catcher`;
+  }
+});
+
+// ─── BLE ──────────────────────────────────────────────────────────────────────
+const ble = new BleService({ alpha: 0.22 });
+ble.addEventListener("status",    e => setStatus(e.detail.text));
+ble.addEventListener("data",      e => engine.updateInput(
+  e.detail.smooth.roll,
+  e.detail.smooth.pitch,
+  e.detail.smooth.yaw
+));
+ble.enableKeyboard();
+
+document.getElementById("bleBtn").addEventListener("click", async () => {
+  await ble.connect();
+});
+
+// ─── Меню ─────────────────────────────────────────────────────────────────────
+function startGame() {
+  menuEl.style.display = "none";
+  engine.start();
+  setStatus("Играй! A/D или наклоняй кисть");
+}
+
+document.getElementById("startBtn").addEventListener("click",  startGame);
+document.getElementById("startBtn2").addEventListener("click", startGame);
+
+setStatus("Нажми ▶ Начать игру");
+</script>
+</body>
+</html>

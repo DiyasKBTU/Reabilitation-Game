@@ -1,0 +1,75 @@
+version: "3.9"
+
+# RehabGame — локальный стек
+# Запуск:        docker compose up
+# Только MongoDB: docker compose up mongo
+# Пересборка:    docker compose up --build
+
+services:
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: rehabgame-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: rehabgame
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: rehabgame-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://mongo:27017/rehabgame
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:3000
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      DEMO_MODE: ${DEMO_MODE:-true}
+    volumes:
+      - ./api:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend (Vite dev, production use nginx) ─────────────────────────────
+  web:
+    image: node:20-alpine
+    container_name: rehabgame-web
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: ""
+      API_TARGET: "http://api:8000"
+    volumes:
+      - ./web:/app
+      - ./packages:/packages
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  mongo_data:
+    driver: local

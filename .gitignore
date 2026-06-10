@@ -1,0 +1,43 @@
+# ── Secrets ──────────────────────────────────────────────
+.env
+**/.env
+# .env.example — оставляем в репо (шаблон без секретов)
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+**/.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ── Node ─────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+web/dist/
+web/dev.log
+
+# ── IDE / OS ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Claude Code ───────────────────────────────────────────
+# .claude/ содержит настройки сессий и launch.json — не нужны в репо
+.claude/
+
+# ── Docker volumes / data ────────────────────────────────
+mongo-data/
+*.log
+
+# ── Старые файлы (удалены, на всякий случай) ────────────
+name.txt
+test.txt

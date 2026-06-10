@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>IMU Recorder — RehabGame</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a12;--bg2:#111120;--bg3:#1a1a2e;--border:#2a2a40;--text:#e2e8f0;--muted:#64748b;--good:#10b981;--warn:#f59e0b;--crit:#ef4444;--blue:#3b82f6}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;padding:20px}
+#wrap{max-width:700px;margin:0 auto}
+h1{font-size:17px;font-weight:700;margin-bottom:2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+h2{font-size:13px;font-weight:600;margin-bottom:8px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.explain{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:12px}
+.explain strong{color:var(--text)}
+button{padding:8px 16px;background:var(--blue);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:default}
+button.sec{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+button.rec{background:#052e16;color:var(--good);border:1px solid #14532d}
+button.stop{background:#450a0a;color:#f87171;border:1px solid #7f1d1d}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.status-bar{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--good)}.dot-err{background:var(--crit)}.dot-gray{background:var(--muted)}.dot-rec{background:var(--crit);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.imu-display{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.imu-val{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center}
+.imu-num{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.imu-label{font-size:11px;color:var(--muted);margin-top:3px}
+.chart-wrap{background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:10px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px}
+.row:last-child{border-bottom:none}
+.row-val{font-weight:600;font-variant-numeric:tabular-nums}
+.badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.badge-ok{background:#052e16;color:var(--good);border:1px solid #14532d}
+.badge-err{background:#450a0a;color:var(--crit);border:1px solid #7f1d1d}
+input[type=text]{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:7px 10px;outline:none}
+input:focus{border-color:var(--blue)}
+label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>📡 IMU Recorder</h1>
+  <p class="sub">Подключается к ESP32-C3-IMU через BLE и записывает сырые данные. Экспорт в JSON → ML Debug.</p>
+
+  <div class="explain">
+    <strong>Как использовать:</strong><br>
+    1. Включи устройство (ESP32-C3-IMU)<br>
+    2. Нажми «Подключить BLE» — браузер покажет диалог выбора устройства<br>
+    3. Нажми «⏺ Начать запись» — двигай кистью<br>
+    4. Нажми «⏹ Стоп» — скачай JSON<br>
+    5. Открой JSON в <a href="../../ml-service/debug-ui/" style="color:var(--blue)">ML Debug</a> для анализа
+    <br><br>
+    <strong>Важно:</strong> Нужен Chrome или Edge. Safari не поддерживает Web Bluetooth.
+    Страница должна быть открыта на <code>localhost</code> или HTTPS.
+  </div>
+
+  <!-- BLE status -->
+  <div class="status-bar">
+    <div class="dot dot-gray" id="ble-dot"></div>
+    <span id="ble-status">Не подключено</span>
+    <span style="margin-left:auto;color:var(--muted);font-size:11px" id="ble-device"></span>
+  </div>
+
+  <!-- BLE controls -->
+  <div class="card">
+    <h2>Устройство</h2>
+    <div class="btn-row">
+      <button id="connect-btn" onclick="connectBle()">🔵 Подключить BLE</button>
+      <button class="sec" id="disconnect-btn" onclick="disconnectBle()" disabled>Отключить</button>
+      <button class="sec" onclick="calibrate()" id="calib-btn" disabled>Калибровать</button>
+    </div>
+
+    <!-- Live IMU values -->
+    <div class="imu-display">
+      <div class="imu-val">
+        <div class="imu-num" id="v-roll">—</div>
+        <div class="imu-label">Roll (°)</div>
+      </div>
+      <div class="imu-val">
+        <div class="imu-num" id="v-pitch">—</div>
+        <div class="imu-label">Pitch (°)</div>
+      </div>
+      <div class="imu-val">
+        <div class="imu-num" id="v-yaw">—</div>
+        <div class="imu-label">Yaw (°)</div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="live-chart" height="100"></canvas>
+    </div>
+  </div>
+
+  <!-- Recording -->
+  <div class="card">
+    <h2>Запись</h2>
+    <div class="btn-row">
+      <button class="rec" id="rec-btn" onclick="toggleRecord()" disabled>⏺ Начать запись</button>
+      <span id="rec-info" style="display:none;font-size:13px;color:var(--crit)">
+        ⏺ <span id="rec-sec">0</span>с • <span id="rec-pts">0</span> точек
+      </span>
+    </div>
+
+    <!-- Export (shown after recording) -->
+    <div id="export-panel" style="display:none">
+      <div style="padding:8px 12px;background:#052e16;border-radius:6px;margin-bottom:10px;font-size:12px;color:var(--good)">
+        ✓ Записано: <strong id="final-pts">0</strong> точек, <strong id="final-dur">0</strong>с
+      </div>
+      <div style="margin-bottom:8px">
+        <label>Имя файла</label>
+        <input type="text" id="filename" value="">
+      </div>
+      <div class="btn-row">
+        <button onclick="exportJson()">📥 Скачать JSON</button>
+        <button class="sec" onclick="copyJson()">📋 Копировать</button>
+        <button class="sec" onclick="openMlDebug()">🧠 ML Debug</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="card" id="stats-card" style="display:none">
+    <h2>Статистика записи</h2>
+    <div id="stats-content"></div>
+  </div>
+
+</div>
+
+<script>
+// UUIDs — должны совпадать с firmware ESP32
+const SERVICE_UUID = "12345678-1234-1234-1234-123456789abc";
+const DATA_UUID    = "abcd1234-ab12-ab12-ab12-abcdef123456";
+const CALIB_UUID   = "abcd1235-ab12-ab12-ab12-abcdef123456";
+
+let device = null, calibChar = null;
+let isConnected = false, isRecording = false;
+let recordBuffer = [];
+let recordStart = 0;
+let recInterval = null;
+let chartInst = null;
+const MAX_CHART_PTS = 200;
+
+// EMA
+let sRoll = 0, sPitch = 0, sYaw = 0;
+const alpha = 0.22;
+
+// ─── BLE ─────────────────────────────────────────────────────────────────────
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    alert("Web Bluetooth недоступен. Нужен Chrome/Edge + HTTPS или localhost.");
+    return;
+  }
+  setStatus("Поиск устройства...", "gray");
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "ESP32-C3-IMU" }],
+      optionalServices: [SERVICE_UUID]
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    setStatus("Подключение...", "gray");
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    const dataChar = await service.getCharacteristic(DATA_UUID);
+    calibChar = await service.getCharacteristic(CALIB_UUID);
+
+    await dataChar.startNotifications();
+    dataChar.addEventListener("characteristicvaluechanged", onData);
+
+    isConnected = true;
+    setStatus("Подключено: " + device.name, "ok");
+    document.getElementById("ble-device").textContent = device.id?.slice(0,12) || "";
+    document.getElementById("disconnect-btn").disabled = false;
+    document.getElementById("calib-btn").disabled = false;
+    document.getElementById("rec-btn").disabled = false;
+    initChart();
+  } catch(e) {
+    if (e.name === "NotFoundError") { setStatus("Отменено", "gray"); return; }
+    setStatus("Ошибка: " + e.message, "err");
+  }
+}
+
+function disconnectBle() {
+  if (device?.gatt?.connected) device.gatt.disconnect();
+  onDisconnected();
+}
+
+function onDisconnected() {
+  isConnected = false;
+  if (isRecording) stopRecord();
+  setStatus("Отключено", "gray");
+  document.getElementById("ble-device").textContent = "";
+  document.getElementById("disconnect-btn").disabled = true;
+  document.getElementById("calib-btn").disabled = true;
+  document.getElementById("rec-btn").disabled = true;
+}
+
+async function calibrate() {
+  if (!calibChar) return;
+  try {
+    await calibChar.writeValue(new TextEncoder().encode("CALIB"));
+    setStatus("Калибровка отправлена", "ok");
+  } catch(e) { setStatus("Ошибка калибровки: " + e.message, "err"); }
+}
+
+function onData(event) {
+  const raw = new TextDecoder().decode(event.target.value);
+  const parts = raw.trim().split(",").map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return;
+
+  let [y, p, r] = parts;
+  while (y > 180) y -= 360; while (y < -180) y += 360;
+
+  sRoll  = sRoll  * (1-alpha) + r * alpha;
+  sPitch = sPitch * (1-alpha) + p * alpha;
+  sYaw   = sYaw   * (1-alpha) + y * alpha;
+
+  // Update display
+  document.getElementById("v-roll").textContent  = sRoll.toFixed(1);
+  document.getElementById("v-pitch").textContent = sPitch.toFixed(1);
+  document.getElementById("v-yaw").textContent   = sYaw.toFixed(1);
+
+  // Update chart
+  if (chartInst) {
+    const d = chartInst.data;
+    if (d.labels.length > MAX_CHART_PTS) {
+      d.labels.shift();
+      d.datasets[0].data.shift();
+      d.datasets[1].data.shift();
+    }
+    d.labels.push(d.labels.length);
+    d.datasets[0].data.push(parseFloat(sRoll.toFixed(2)));
+    d.datasets[1].data.push(parseFloat(sPitch.toFixed(2)));
+    chartInst.update("none");
+  }
+
+  // Record
+  if (isRecording) {
+    recordBuffer.push({
+      t: Date.now() - recordStart,
+      r: parseFloat(sRoll.toFixed(2)),
+      p: parseFloat(sPitch.toFixed(2)),
+      y: parseFloat(sYaw.toFixed(2))
+    });
+  }
+}
+
+// ─── Recording ────────────────────────────────────────────────────────────────
+function toggleRecord() {
+  if (isRecording) stopRecord(); else startRecord();
+}
+
+function startRecord() {
+  isRecording = true;
+  recordBuffer = [];
+  recordStart = Date.now();
+
+  const btn = document.getElementById("rec-btn");
+  btn.textContent = "⏹ Стоп";
+  btn.classList.remove("rec");
+  btn.classList.add("stop");
+
+  const info = document.getElementById("rec-info");
+  info.style.display = "inline-flex";
+  info.style.alignItems = "center";
+  info.style.gap = "6px";
+
+  document.getElementById("export-panel").style.display = "none";
+  document.getElementById("stats-card").style.display = "none";
+  document.getElementById("ble-dot").className = "dot dot-rec";
+
+  recInterval = setInterval(() => {
+    const sec = Math.floor((Date.now()-recordStart)/1000);
+    document.getElementById("rec-sec").textContent = sec;
+    document.getElementById("rec-pts").textContent = recordBuffer.length;
+  }, 500);
+}
+
+function stopRecord() {
+  isRecording = false;
+  clearInterval(recInterval);
+
+  const btn = document.getElementById("rec-btn");
+  btn.textContent = "⏺ Начать запись";
+  btn.classList.add("rec");
+  btn.classList.remove("stop");
+
+  document.getElementById("rec-info").style.display = "none";
+  document.getElementById("ble-dot").className = isConnected ? "dot dot-ok" : "dot dot-gray";
+
+  if (recordBuffer.length > 0) {
+    const dur = ((recordBuffer[recordBuffer.length-1].t - recordBuffer[0].t)/1000).toFixed(1);
+    document.getElementById("final-pts").textContent = recordBuffer.length;
+    document.getElementById("final-dur").textContent = dur;
+    document.getElementById("filename").value = `imu_record_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.json`;
+    document.getElementById("export-panel").style.display = "block";
+    showStats();
+  }
+}
+
+function showStats() {
+  const rolls = recordBuffer.map(p => p.r);
+  const min = Math.min(...rolls), max = Math.max(...rolls);
+  const rom = max - min;
+  const dur = recordBuffer.length > 0 ? (recordBuffer[recordBuffer.length-1].t/1000).toFixed(1) : 0;
+
+  document.getElementById("stats-content").innerHTML = `
+    <div class="row"><span>Точек</span><span class="row-val">${recordBuffer.length}</span></div>
+    <div class="row"><span>Длительность</span><span class="row-val">${dur}с</span></div>
+    <div class="row"><span>ROM (roll)</span><span class="row-val">${rom.toFixed(1)}°</span></div>
+    <div class="row"><span>Min roll</span><span class="row-val">${min.toFixed(1)}°</span></div>
+    <div class="row"><span>Max roll</span><span class="row-val">${max.toFixed(1)}°</span></div>
+    <div class="row"><span>Средний roll</span><span class="row-val">${(rolls.reduce((a,b)=>a+b,0)/rolls.length).toFixed(1)}°</span></div>
+  `;
+  document.getElementById("stats-card").style.display = "block";
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportJson() {
+  if (!recordBuffer.length) return;
+  const name = document.getElementById("filename").value || "imu_record.json";
+  const blob = new Blob([JSON.stringify(recordBuffer, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+}
+
+function copyJson() {
+  if (!recordBuffer.length) return;
+  navigator.clipboard.writeText(JSON.stringify(recordBuffer))
+    .then(() => alert("Скопировано! Вставь в ML Debug → 'Вставить JSON'"))
+    .catch(() => alert("Ошибка копирования"));
+}
+
+function openMlDebug() {
+  if (!recordBuffer.length) return;
+  sessionStorage.setItem("imu_debug_data", JSON.stringify(recordBuffer));
+  window.open("../../ml-service/debug-ui/", "_blank");
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function setStatus(text, state) {
+  document.getElementById("ble-status").textContent = text;
+  const dot = document.getElementById("ble-dot");
+  dot.className = "dot " + ({ok:"dot-ok",err:"dot-err",gray:"dot-gray"}[state]||"dot-gray");
+}
+
+function initChart() {
+  if (chartInst) { chartInst.destroy(); }
+  chartInst = new Chart(document.getElementById("live-chart"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        {label:"roll", data:[], borderColor:"#3b82f6", backgroundColor:"rgba(59,130,246,.05)", tension:.2, pointRadius:0, borderWidth:1.5},
+        {label:"pitch",data:[], borderColor:"#10b981", backgroundColor:"transparent", tension:.2, pointRadius:0, borderWidth:1}
+      ]
+    },
+    options: {
+      responsive:true, animation:false,
+      plugins:{ legend:{ labels:{color:"#64748b",boxWidth:10,font:{size:10}} } },
+      scales:{
+        x:{ticks:{color:"#475569",maxTicksLimit:6},grid:{color:"#1a1a2e"}},
+        y:{ticks:{color:"#475569"},grid:{color:"#1a1a2e"}}
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

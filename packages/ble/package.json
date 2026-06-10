@@ -1,0 +1,7 @@
+{
+  "name": "@rehabgame/ble",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "Framework-agnostic BLE service for RehabGame (ESP32-C3-IMU)"
+}

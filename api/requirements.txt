@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+beanie>=1.26,<2
+motor>=3.6,<4
+pydantic-settings>=2.4
+pydantic[email]>=2.8
+python-jose[cryptography]>=3.3
+passlib[bcrypt]>=1.7
+# passlib 1.7.4 (последний релиз) несовместим с bcrypt>=4.1 (тот кидает ValueError на тестовом
+# пароле >72 байт при инициализации backend). Закрепляем на последней совместимой версии.
+bcrypt==4.0.1
+python-multipart>=0.0.17
+scikit-learn>=1.5
+joblib>=1.4
+numpy>=1.26

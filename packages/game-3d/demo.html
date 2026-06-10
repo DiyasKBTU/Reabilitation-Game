@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Game 3D Demo — City Driver (standalone)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b1026; color: #e2e8f0; font-family: -apple-system, sans-serif; overflow: hidden; }
+  #hud { position: fixed; top: 12px; left: 12px; background: rgba(11,16,38,.8); border: 1px solid #2a2a40; border-radius: 10px; padding: 12px 16px; font-size: 14px; z-index: 10; min-width: 150px; }
+  #hud .score { font-size: 26px; font-weight: bold; color: #60a5fa; }
+  #hud .row { margin-top: 4px; color: #94a3b8; font-size: 13px; }
+  #combo { color: #fb923c; font-weight: bold; }
+  #controls { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; z-index: 10; }
+  button { padding: 6px 12px; background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  button:hover { background: #2a4a7f; }
+  #rom { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); width: 280px; z-index: 10; }
+  #romBar { height: 10px; background: rgba(255,255,255,.1); border-radius: 6px; position: relative; }
+  #romFill { position: absolute; top: 0; bottom: 0; width: 4px; background: #22c55e; border-radius: 4px; left: 50%; transition: none; }
+  #romLabel { text-align: center; font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  #speedBar { height: 8px; background: rgba(255,255,255,.1); border-radius: 6px; position: relative; margin-top: 10px; }
+  #speedFill { position: absolute; top: 0; bottom: 0; left: 0; width: 50%; background: #38bdf8; border-radius: 6px; }
+  #speedLabel { text-align: center; font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  #status { position: fixed; bottom: 56px; left: 50%; transform: translateX(-50%); background: rgba(17,17,32,.9); border-radius: 6px; padding: 6px 14px; font-size: 12px; color: #64748b; }
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(5,8,22,0.9); z-index: 5; }
+  #menu h1 { font-size: 46px; color: #60a5fa; margin-bottom: 8px; }
+  #menu p { color: #94a3b8; margin-bottom: 28px; }
+  #challenge { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: rgba(37,99,235,.22); border: 1px solid #2563eb; border-radius: 999px; padding: 7px 18px; font-size: 14px; font-weight: 600; color: #93c5fd; z-index: 10; white-space: nowrap; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <div class="score">0</div>
+  <div class="row">Уровень: <span id="level">1</span></div>
+  <div class="row">Жизни: <span id="lives">❤️❤️❤️</span></div>
+  <div class="row" id="comboRow" style="display:none"><span id="combo">COMBO ×0</span></div>
+</div>
+
+<div id="controls">
+  <button id="bleBtn">🔵 BLE</button>
+  <button id="startBtn2">▶ Старт</button>
+</div>
+
+<div id="rom">
+  <div id="romBar"><div id="romFill"></div></div>
+  <div id="romLabel">Руль (roll): 0°</div>
+  <div id="speedBar"><div id="speedFill"></div></div>
+  <div id="speedLabel">Скорость (pitch): крейсер</div>
+</div>
+
+<div id="menu">
+  <h1>🏙️ City Driver</h1>
+  <p>Наклон влево/вправо (roll) или A/D — руль. Наклон вперёд/назад (pitch) или W/S — газ/тормоз. Лови монеты, тормози перед воротами.</p>
+  <button id="startBtn" style="font-size:18px;padding:14px 36px">▶ Начать поездку</button>
+</div>
+
+<div id="status">Загрузка...</div>
+<div id="challenge"></div>
+
+<canvas id="canvas"></canvas>
+
+<script type="module">
+import { Game3DEngine } from './index.js';
+import { BleService }   from '../ble/index.js';
+
+const canvas = document.getElementById('canvas');
+const menuEl = document.getElementById('menu');
+const statusEl = document.getElementById('status');
+const scoreEl = document.querySelector('#hud .score');
+const levelEl = document.getElementById('level');
+const livesEl = document.getElementById('lives');
+const comboRow = document.getElementById('comboRow');
+const comboEl = document.getElementById('combo');
+const romFill = document.getElementById('romFill');
+const romLabel = document.getElementById('romLabel');
+const challengeEl = document.getElementById('challenge');
+const speedFill = document.getElementById('speedFill');
+const speedLabel = document.getElementById('speedLabel');
+
+const setStatus = (m) => statusEl.textContent = m;
+
+function updateHud(s) {
+  scoreEl.textContent = s.score;
+  levelEl.textContent = s.level;
+  if (s.challengeLabel) challengeEl.textContent = s.challengeLabel;
+  livesEl.textContent = '❤️'.repeat(Math.max(0, s.lives)) + '🖤'.repeat(Math.max(0, 3 - s.lives));
+  if (s.combo >= 2) { comboRow.style.display = 'block'; comboEl.textContent = `COMBO ×${s.combo}`; }
+  else comboRow.style.display = 'none';
+}
+
+const engine = new Game3DEngine(canvas, {
+  alpha: 0.2,
+  onGameOver: (data) => {
+    setStatus(`Поездка окончена! Очки: ${data.score} · зоны: ${data.zoneHits} · ${data.durationSec}с`);
+    menuEl.style.display = 'flex';
+    menuEl.querySelector('h1').textContent = '🏁 Финиш';
+    menuEl.querySelector('p').textContent = `Очки: ${data.score} · Макс комбо ×${data.maxCombo} · Зональные: ${data.zoneHits}`;
+    console.log('SESSION DATA (demo, не отправляется):', data);
+  },
+  onState: updateHud,
+});
+
+// ROM-бар обновляем в своём rAF (без перерисовки HUD каждый кадр)
+function romLoop() {
+  const roll = engine.state.roll;
+  const norm = Math.max(-1, Math.min(1, roll / 45));
+  romFill.style.left = `calc(50% + ${norm * 50}% - 2px)`;
+  const a = Math.abs(roll);
+  romFill.style.background = a > 25 ? '#22c55e' : a > 10 ? '#f59e0b' : '#ef4444';
+  romLabel.textContent = `Руль (roll): ${roll.toFixed(1)}°`;
+  const thr = engine.state.throttle ?? 1;   // 0.45..1.6
+  const pct = Math.max(0, Math.min(100, (thr - 0.45) / (1.6 - 0.45) * 100));
+  speedFill.style.width = pct + '%';
+  speedFill.style.background = thr > 1.1 ? '#22c55e' : thr < 0.9 ? '#ef4444' : '#38bdf8';
+  speedLabel.textContent = `Скорость (pitch): ${thr > 1.1 ? 'газ' : thr < 0.9 ? 'тормоз' : 'крейсер'}`;
+  requestAnimationFrame(romLoop);
+}
+romLoop();
+
+const ble = new BleService({ alpha: 0.2 });
+ble.addEventListener('status', e => setStatus(e.detail.text));
+ble.addEventListener('data', e => engine.updateInput(e.detail.smooth.roll, e.detail.smooth.pitch, e.detail.smooth.yaw));
+// Клавиатурой управляет сам движок (A/D — руль, W/S — газ/тормоз); BLE-клавиатуру не включаем,
+// чтобы не было двойного источника ввода. Кнопка BLE подключает реальное устройство.
+document.getElementById('bleBtn').addEventListener('click', () => ble.connect());
+
+function startGame() {
+  menuEl.style.display = 'none';
+  engine.start();
+  setStatus('Поехали! Наклоняй кисть или ←→');
+}
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('startBtn2').addEventListener('click', startGame);
+setStatus('Нажми ▶ чтобы начать');
+</script>
+</body>
+</html>
