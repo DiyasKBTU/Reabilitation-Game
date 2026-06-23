@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from beanie import PydanticObjectId
 from ..models.user import User
 from ..models.patient import Patient
-from ..auth.deps import get_current_user, require_doctor
+from ..auth.deps import get_current_user, require_doctor, verify_patient_access
 from ..schemas.patient import PatientOut, PatientCreate, PatientUpdate
 from typing import List
 
@@ -50,19 +50,15 @@ async def create_patient(body: PatientCreate, user: User = Depends(require_docto
 
 @router.get("/{pid}", response_model=PatientOut)
 async def get_patient(pid: str, user: User = Depends(get_current_user)):
-    p = await Patient.get(PydanticObjectId(pid))
-    if not p:
-        raise HTTPException(404, "Пациент не найден")
-    if user.role == "patient" and p.user_id != user.id:
-        raise HTTPException(403, "Нет доступа")
+    # IDOR-гард: пациент — только своя карточка, врач — только свои пациенты, admin — все.
+    p = await verify_patient_access(pid, user)
     return _out(p)
 
 
 @router.patch("/{pid}", response_model=PatientOut)
 async def update_patient(pid: str, body: PatientUpdate, user: User = Depends(require_doctor)):
-    p = await Patient.get(PydanticObjectId(pid))
-    if not p:
-        raise HTTPException(404, "Пациент не найден")
+    # require_doctor: менять карточку может только врач/admin; verify — только своего пациента.
+    p = await verify_patient_access(pid, user)
     update_data = body.model_dump(exclude_none=True)
     if update_data:
         await p.set(update_data)

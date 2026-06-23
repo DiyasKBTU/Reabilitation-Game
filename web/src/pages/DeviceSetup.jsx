@@ -24,8 +24,29 @@ function AxisBar({ label, value, range, leftHint, rightHint }) {
   );
 }
 
+/** Тумблер настройки (вкл/выкл) с подписью и пояснением. */
+function Toggle({ label, hint, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      aria-pressed={checked}
+      className="w-full flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-slate-300"
+    >
+      <span>
+        <span className="block text-sm font-medium text-slate-800">{label}</span>
+        {hint && <span className="block text-xs text-slate-500 mt-0.5">{hint}</span>}
+      </span>
+      <span className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-slate-300'}`}>
+        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-[left] ${checked ? 'left-[22px]' : 'left-0.5'}`} />
+      </span>
+    </button>
+  );
+}
+
 export default function DeviceSetup() {
-  const { connected, status, lastReading, disconnect, calibrate } = useBleStore();
+  const { connected, status, lastReading, disconnect, calibrate,
+          invert, hasNeutral, fixNeutral, clearNeutral, setInvert } = useBleStore();
   const r = lastReading?.smooth;
 
   return (
@@ -103,6 +124,56 @@ export default function DeviceSetup() {
           </div>
         </div>
       )}
+
+      {/* Направление и нейтраль по умолчанию (сохраняются в браузере) */}
+      <div className="card p-5">
+        <h3 className="font-semibold text-slate-800 mb-1">Направление и нейтраль</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Настройки сохраняются в браузере и применяются автоматически на старте каждой игры.
+        </p>
+
+        <div className="space-y-3">
+          <Toggle
+            label="Инвертировать руль (крен)"
+            hint="Включите, если при наклоне кисти вправо объект едет влево."
+            checked={!!invert?.roll}
+            onChange={(v) => setInvert('roll', v)}
+          />
+          <Toggle
+            label="Инвертировать газ/тормоз (тангаж)"
+            hint="Включите, если наклон вперёд тормозит, а назад — разгоняет (City Driver)."
+            checked={!!invert?.pitch}
+            onChange={(v) => setInvert('pitch', v)}
+          />
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-slate-800">Нейтраль по умолчанию</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                {hasNeutral
+                  ? 'Сохранена. Поза восстанавливается на старте каждой игры.'
+                  : 'Не задана. Поставьте кисть удобно и зафиксируйте — это станет нулём.'}
+              </div>
+            </div>
+            {hasNeutral && (
+              <button onClick={clearNeutral} className="btn-secondary text-sm whitespace-nowrap">Сбросить</button>
+            )}
+          </div>
+          <button
+            onClick={fixNeutral}
+            disabled={!connected}
+            className="btn-primary text-sm mt-3 w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+            title={connected ? '' : 'Сначала подключите датчик'}
+          >
+            <CheckCircleIcon size={15} /> {hasNeutral ? 'Зафиксировать заново' : 'Зафиксировать текущее положение'}
+          </button>
+          {!connected && (
+            <p className="text-xs text-slate-400 mt-2 text-center">Доступно после подключения датчика.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

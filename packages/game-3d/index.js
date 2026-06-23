@@ -47,6 +47,11 @@ const CHALLENGE_LABELS = {
 };
 const CHALLENGE_MS = 14000;   // длительность одного испытания
 
+// Частота записи IMU-ряда для ML. 25 Гц (Nyquist 12.5 Гц) покрывает полосу тремора 3–12 Гц;
+// на прежних 5 Гц спектральные признаки tremorPower/tremorFreqHz структурно зануляются.
+// Совпадает с fs_hz синтетики обучения (25 Гц).
+const IMU_RECORD_MS = 40;
+
 // Газ/тормоз наклоном кисти вперёд-назад (ось pitch) — вторая ось для ML
 const PITCH_RANGE = 35;       // °: полный наклон вперёд/назад
 const SPEED_MIN   = 0.45;     // множитель скорости при полном торможении
@@ -71,6 +76,8 @@ export class Game3DEngine {
     // Вход (BLE / клавиатура)
     this._roll = 0; this._pitch = 0; this._yaw = 0;
     this._smoothRoll = 0; this._smoothPitch = 0; this._smoothYaw = 0;
+    // Канал ЗАПИСИ для ML: калиброванный НЕсглаженный угол (управление — по _smooth*).
+    this._recRoll = 0; this._recPitch = 0; this._recYaw = 0;
 
     // Состояние игры
     this._gameStarted = false;
@@ -96,6 +103,8 @@ export class Game3DEngine {
     this._keys = {};
     this._carX = 0;        // текущая позиция машины по X
     this._goldenActive = false;
+    this._shield = false;       // щит активен → гасит одно столкновение
+    this._powerupTimer = 0;     // таймер спавна бонуса-щита
 
     // Испытания (стадии): тип меняется по таймеру, сложность растёт
     this._challengeIdx = 0; this._challengeTimer = 0; this._difficulty = 1;
@@ -125,7 +134,14 @@ export class Game3DEngine {
 
   // ─── Публичный API ──────────────────────────────────────────────────────────
 
-  updateInput(rollDeg, pitchDeg = 0, yawDeg = 0) {
+  /**
+   * @param {number} rollDeg   сглаженный угол (управление)
+   * @param {number} [pitchDeg]
+   * @param {number} [yawDeg]
+   * @param {{roll:number,pitch:number,yaw:number}} [rec] калиброванный НЕсглаженный угол для
+   *        записи в ML-ряд (BLE-поле `calib`). Если не передан — пишем сглаженный (демо/keyboard).
+   */
+  updateInput(rollDeg, pitchDeg = 0, yawDeg = 0, rec = null) {
     this._bleInput = true;
     this._roll  = this._normalizeAngle(rollDeg);
     this._pitch = pitchDeg;
@@ -134,6 +150,11 @@ export class Game3DEngine {
     this._smoothRoll  = this._smoothRoll  * a + this._roll  * this._alpha;
     this._smoothPitch = this._smoothPitch * a + this._pitch * this._alpha;
     this._smoothYaw   = this._smoothYaw   * a + this._yaw   * this._alpha;
+
+    // Запись — несглаженный калиброванный угол (сохраняет тремор для ML).
+    this._recRoll  = rec ? this._normalizeAngle(rec.roll)  : this._smoothRoll;
+    this._recPitch = rec ? rec.pitch                       : this._smoothPitch;
+    this._recYaw   = rec ? this._normalizeAngle(rec.yaw)   : this._smoothYaw;
   }
 
   start() {
@@ -162,6 +183,7 @@ export class Game3DEngine {
         mats.forEach((m) => m.dispose?.());
       }
     });
+    this._bakedTextures?.forEach((t) => t.dispose?.());  // dispose материала НЕ освобождает его карты
     this._renderer?.dispose?.();
     this._renderer?.forceContextLoss?.();  // dispose НЕ освобождает сам WebGL-контекст → утечка при перемонтировании
     this._renderer = null;
@@ -178,6 +200,7 @@ export class Game3DEngine {
       pitch: this._smoothPitch,
       throttle: this._throttle,
       zoneHits: this._zoneHits,
+      shield: this._shield,
       challenge:      CHALLENGES[this._challengeIdx % CHALLENGES.length],
       challengeLabel: CHALLENGE_LABELS[CHALLENGES[this._challengeIdx % CHALLENGES.length]],
       gameOver: this._gameOver,
@@ -200,20 +223,21 @@ export class Game3DEngine {
     this._fpsAccum = 0; this._fpsFrames = 0;   // для адаптивного разрешения
 
     this._scene = new THREE.Scene();
-    const sky = new THREE.Color(0x0b1026);
-    this._scene.background = sky;
-    this._scene.fog = new THREE.Fog(sky, 40, 170);
+    this._bakedTextures = [];            // процедурные текстуры → освобождаем в destroy()
+    this._scene.background = this._makeSkyTexture();   // градиентное ночное небо вместо заливки
+    const fogColor = new THREE.Color(0x1a1d3a);
+    this._scene.fog = new THREE.Fog(fogColor, 45, 175);
 
     this._camera = new THREE.PerspectiveCamera(72, 1, 0.1, 400);
     this._camera.position.set(0, 5, 9);
     this._camera.lookAt(0, 1.2, -12);
 
-    // Освещение
-    this._scene.add(new THREE.AmbientLight(0x8899bb, 0.85));
-    const dir = new THREE.DirectionalLight(0xfff0dd, 1.0);
+    // Освещение: ночной город — приглушённый ambient, чтобы светящиеся окна и фары читались.
+    this._scene.add(new THREE.AmbientLight(0x6675a0, 0.6));
+    const dir = new THREE.DirectionalLight(0xbcd0ff, 0.8);  // холодный «лунный» свет
     dir.position.set(-8, 18, 6);
     this._scene.add(dir);
-    const hemi = new THREE.HemisphereLight(0x6688cc, 0x101830, 0.5);
+    const hemi = new THREE.HemisphereLight(0x556699, 0x0a0e1c, 0.45);
     this._scene.add(hemi);
   }
 
@@ -229,10 +253,12 @@ export class Game3DEngine {
     ground.position.set(0, -0.02, -ROAD_LEN / 2 + 20);
     scene.add(ground);
 
-    // ── Дорога ───────────────────────────────────────────────────────────────
+    // ── Дорога (асфальт-текстура) ─────────────────────────────────────────────
+    const asphalt = this._makeAsphaltTexture();
+    asphalt.repeat.set(2, (ROAD_LEN + 80) / 9);
     const road = new THREE.Mesh(
       new THREE.PlaneGeometry(ROAD_W, ROAD_LEN + 80),
-      new THREE.MeshLambertMaterial({ color: 0x1b2436 })
+      new THREE.MeshStandardMaterial({ map: asphalt, color: 0x2a3346, roughness: 0.96, metalness: 0.0 })
     );
     road.rotation.x = -Math.PI / 2;
     road.position.set(0, 0, -ROAD_LEN / 2 + 20);
@@ -262,11 +288,17 @@ export class Game3DEngine {
       scene.add(d);
     }
 
-    // ── Пул зданий (город по бокам) ──────────────────────────────────────────
+    // ── Звёзды + город по бокам (фасады со светящимися окнами) ─────────────────
+    this._buildStars();
     this._buildings = [];
     const bGeo = new THREE.BoxGeometry(1, 1, 1);
+    const facades = [this._makeFacadeTexture(0), this._makeFacadeTexture(1), this._makeFacadeTexture(2)];
     for (let i = 0; i < 18; i++) {
-      const mat = new THREE.MeshLambertMaterial({ color: BUILDING_COLORS[i % BUILDING_COLORS.length] });
+      const tex = facades[i % facades.length];
+      const mat = new THREE.MeshStandardMaterial({
+        map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.85,
+        color: 0x2a3350, roughness: 0.85, metalness: 0.0,
+      });
       const b = new THREE.Mesh(bGeo, mat);
       this._buildings.push(b);
       scene.add(b);
@@ -290,7 +322,7 @@ export class Game3DEngine {
     // ── Пул препятствий (встречные машины) ──────────────────────────────────
     this._obstacles = [];
     for (let i = 0; i < 10; i++) {   // 10, чтобы «стена» ворот собиралась из нескольких машин
-      const o = this._buildCar(OBSTACLE_COLORS[i % OBSTACLE_COLORS.length]);
+      const o = this._buildCar(OBSTACLE_COLORS[i % OBSTACLE_COLORS.length], true);
       o.visible = false;
       o.userData.active = false;
       this._obstacles.push(o);
@@ -313,30 +345,151 @@ export class Game3DEngine {
       this._coins.push(c);
       scene.add(c);
     }
+
+    // ── Power-up «щит»: редкий бонус, гасит одно столкновение ──────────────────
+    this._powerup = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.6, 1),
+      new THREE.MeshStandardMaterial({
+        color: 0x34d399, emissive: 0x059669, emissiveIntensity: 0.9, metalness: 0.3, roughness: 0.35,
+      })
+    );
+    this._powerup.visible = false;
+    this._powerup.userData.active = false;
+    scene.add(this._powerup);
+
+    // Аура щита вокруг машины (видна, пока щит активен)
+    this._shieldAura = new THREE.Mesh(
+      new THREE.SphereGeometry(2.1, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color: 0x34d399, transparent: true, opacity: 0.16, side: THREE.BackSide, depthWrite: false,
+      })
+    );
+    this._shieldAura.position.y = 0.6;
+    this._shieldAura.visible = false;
+    this._car.add(this._shieldAura);
+  }
+
+  // ─── Процедурные текстуры (пекутся один раз; без внешних файлов → demo.html работает) ──────
+
+  /** Оффскрин-canvas для запекания текстуры (не трогает DOM хоста). */
+  _canvas2d(w, h) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+
+  /** Вертикальный градиент ночного неба (фон сцены). */
+  _makeSkyTexture() {
+    const c = this._canvas2d(16, 256);
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0,   '#05071a');
+    g.addColorStop(0.5, '#121634');
+    g.addColorStop(0.8, '#2a2150');
+    g.addColorStop(1,   '#4a3a6e');   // лёгкое зарево у горизонта
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 256);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this._bakedTextures.push(tex);
+    return tex;
+  }
+
+  /** Асфальт: тёмная база + зернистый шум (вместо плоской заливки дороги). */
+  _makeAsphaltTexture() {
+    const S = 256;
+    const c = this._canvas2d(S, S);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#222a39'; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 2600; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.11)';
+      ctx.fillRect(Math.random() * S, Math.random() * S, 1.6, 1.6);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    this._bakedTextures.push(tex);
+    return tex;
+  }
+
+  /** Фасад здания: тёмная стена + сетка окон, часть светится (служит и map, и emissiveMap). */
+  _makeFacadeTexture(variant = 0) {
+    const W = 128, H = 256;
+    const c = this._canvas2d(W, H);
+    const ctx = c.getContext('2d');
+    const wall = ['#20283c', '#241f33', '#1d2740'][variant % 3];
+    ctx.fillStyle = wall; ctx.fillRect(0, 0, W, H);
+    const lit  = ['#ffd98a', '#bfe3ff', '#ffcf6b'][variant % 3];   // тёплый/холодный свет окон
+    const cols = 4, rows = 9, mx = 10, my = 8;
+    const cw = (W - mx * (cols + 1)) / cols;
+    const ch = (H - my * (rows + 1)) / rows;
+    for (let r = 0; r < rows; r++) {
+      for (let col = 0; col < cols; col++) {
+        const x = mx + col * (cw + mx);
+        const y = my + r * (ch + my);
+        const on = Math.random() < 0.55;
+        ctx.fillStyle = on ? lit : '#0c1120';
+        ctx.fillRect(x, y, cw, ch);
+        if (on) { ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(x, y, cw, ch * 0.4); }
+      }
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1, 2);
+    this._bakedTextures.push(tex);
+    return tex;
+  }
+
+  /** Звёздное небо (точки, без тумана → не гаснут вдали). */
+  _buildStars() {
+    const N = 280;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3]     = (Math.random() * 2 - 1) * 140;
+      pos[i * 3 + 1] = 22 + Math.random() * 100;
+      pos[i * 3 + 2] = SPAWN_Z + Math.random() * 120;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffffff, size: 0.7, sizeAttenuation: true,
+      transparent: true, opacity: 0.85, fog: false,
+    });
+    this._scene.add(new THREE.Points(geo, mat));
   }
 
   /** Собирает простую машинку (group из коробок + колёса). */
-  _buildCar(color) {
+  _buildCar(color, oncoming = false) {
     const g = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.7, 0.6, 3.2),
-      new THREE.MeshLambertMaterial({ color })
+      new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.45 })
     );
     body.position.y = 0.55;
     g.add(body);
     const roof = new THREE.Mesh(
       new THREE.BoxGeometry(1.4, 0.55, 1.6),
-      new THREE.MeshLambertMaterial({ color: 0x0f172a })
+      new THREE.MeshStandardMaterial({ color: 0x0b1020, metalness: 0.3, roughness: 0.35,
+        emissive: 0x223046, emissiveIntensity: 0.35 })   // лёгкое свечение «салона»
     );
     roof.position.set(0, 1.05, -0.1);
     g.add(roof);
     const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.3, 12);
-    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, metalness: 0.2, roughness: 0.8 });
     for (const [wx, wz] of [[-0.85, 1], [0.85, 1], [-0.85, -1], [0.85, -1]]) {
       const w = new THREE.Mesh(wheelGeo, wheelMat);
       w.rotation.z = Math.PI / 2;
       w.position.set(wx, 0.38, wz);
       g.add(w);
+    }
+    // Фары/фонари. Встречные едут на игрока (+Z) → фары светят к камере; игрок едет в сцену (−Z).
+    const frontZ = oncoming ? 1.55 : -1.55;
+    const lampGeo = new THREE.BoxGeometry(0.32, 0.2, 0.12);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xfff6d5, emissive: 0xfff2cc, emissiveIntensity: 1.4 });
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0x661111, emissive: 0xff2222, emissiveIntensity: 1.1 });
+    for (const sx of [-0.55, 0.55]) {
+      const head = new THREE.Mesh(lampGeo, headMat); head.position.set(sx, 0.5, frontZ);   g.add(head);
+      const tail = new THREE.Mesh(lampGeo, tailMat); tail.position.set(sx, 0.55, -frontZ);  g.add(tail);
     }
     return g;
   }
@@ -389,12 +542,16 @@ export class Game3DEngine {
     this._score = 0; this._lives = 3; this._gameOver = false; this._sessionSaved = false;
     this._currentLevel = 1; this._combo = 0; this._maxCombo = 0; this._comboTimer = 0;
     this._zoneHits = 0; this._imuTimeSeries = []; this._imuAccumMs = 0;
+    this._recRoll = 0; this._recPitch = 0; this._recYaw = 0;
     this._obstacleTimer = 0; this._coinTimer = 0; this._carX = 0;
     this._challengeIdx = 0; this._challengeTimer = 0; this._difficulty = 1; this._slalomSide = 1;
     this._kbPitch = 0; this._throttle = 1;
+    this._shield = false; this._powerupTimer = 0;
     this._car.position.x = 0; this._car.rotation.z = 0;
     for (const o of this._obstacles) { o.visible = false; o.userData.active = false; }
     for (const c of this._coins)     { c.visible = false; c.userData.active = false; }
+    if (this._powerup)    { this._powerup.visible = false; this._powerup.userData.active = false; }
+    if (this._shieldAura)   this._shieldAura.visible = false;
   }
 
   // ─── Спавн ────────────────────────────────────────────────────────────────────
@@ -486,13 +643,13 @@ export class Game3DEngine {
   _updateIMURecord() {
     if (!this._gameStarted || this._gameOver) return;
     this._imuAccumMs += this._dtMs;
-    if (this._imuAccumMs >= 200) { // ~5 Гц
+    if (this._imuAccumMs >= IMU_RECORD_MS) { // 25 Гц — покрывает полосу тремора
       this._imuAccumMs = 0;
       this._imuTimeSeries.push({
         t: Date.now() - this._gameStartTime,
-        r: parseFloat(this._smoothRoll.toFixed(2)),
-        p: parseFloat(this._smoothPitch.toFixed(2)),
-        y: parseFloat(this._smoothYaw.toFixed(2)),
+        r: parseFloat(this._recRoll.toFixed(2)),
+        p: parseFloat(this._recPitch.toFixed(2)),
+        y: parseFloat(this._recYaw.toFixed(2)),
       });
     }
   }
@@ -510,6 +667,7 @@ export class Game3DEngine {
       if (this._keys['arrowright'] || this._keys['d']) this._carX += step;
       this._carX = Math.max(-CAR_MAX_X, Math.min(CAR_MAX_X, this._carX));
       this._smoothRoll = (this._carX / CAR_MAX_X) * ROLL_RANGE;
+      this._recRoll = this._smoothRoll;  // без устройства тремора нет — пишем синтез-угол
     }
     this._carX = Math.max(-CAR_MAX_X, Math.min(CAR_MAX_X, this._carX));
     // Плавно подводим машину к целевой позиции
@@ -532,6 +690,7 @@ export class Game3DEngine {
       this._kbPitch = Math.max(-PITCH_RANGE - 3, Math.min(PITCH_RANGE + 3, this._kbPitch));
       this._pitch = this._kbPitch;
       this._smoothPitch = this._smoothPitch * (1 - this._alpha) + this._pitch * this._alpha;
+      this._recPitch = this._smoothPitch;  // без устройства тремора нет — пишем синтез-угол
     }
     const np = Math.max(-1, Math.min(1, this._smoothPitch / PITCH_RANGE));
     this._throttle = np >= 0 ? 1 + np * (SPEED_MAX - 1) : 1 + np * (1 - SPEED_MIN);
@@ -563,6 +722,11 @@ export class Game3DEngine {
       if (Math.abs(o.position.x - carX) < COLLIDE_X &&
           o.position.z > CAR_Z - COLLIDE_Z && o.position.z < CAR_Z + COLLIDE_Z) {
         o.userData.active = false; o.visible = false;
+        if (this._shield) {        // щит погасил удар — жизнь сохранена
+          this._shield = false;
+          this._emitState();
+          continue;
+        }
         this._lives--;
         this._combo = 0; this._comboTimer = 0;
         this._emitState();
@@ -599,6 +763,38 @@ export class Game3DEngine {
     }
   }
 
+  /** Бонус-щит: редкий спавн, подбор включает щит; аура на машине пульсирует, пока щит активен. */
+  _updatePowerup(dz) {
+    if (this._shieldAura) {
+      this._shieldAura.visible = this._shield;
+      if (this._shield) this._shieldAura.scale.setScalar(1 + Math.sin(Date.now() * 0.006) * 0.06);
+    }
+    const p = this._powerup;
+    if (!p) return;
+    if (!p.userData.active) {
+      // спавним, только если щита ещё нет и бонус не на сцене
+      if (!this._shield) {
+        this._powerupTimer += this._dtMs;
+        if (this._powerupTimer >= 9000) {
+          this._powerupTimer = 0;
+          p.userData.active = true; p.visible = true;
+          p.position.set((Math.random() * 2 - 1) * CAR_MAX_X, 0.8, SPAWN_Z);
+        }
+      }
+      return;
+    }
+    p.position.z += dz;
+    p.rotation.y += 0.05 * this._dtFactor;
+    p.rotation.x += 0.03 * this._dtFactor;
+    if (p.position.z > RECYCLE_Z) { p.userData.active = false; p.visible = false; return; }
+    if (Math.abs(p.position.x - this._car.position.x) < COLLIDE_X + 0.3 &&
+        p.position.z > CAR_Z - COLLIDE_Z && p.position.z < CAR_Z + COLLIDE_Z) {
+      p.userData.active = false; p.visible = false;
+      this._shield = true;
+      this._emitState();
+    }
+  }
+
   _update() {
     this._updateIMURecord();
     if (!this._gameStarted || this._gameOver) return;
@@ -612,6 +808,7 @@ export class Game3DEngine {
     this._moveWorld(dz);
     this._updateObstacles(dz);
     this._updateCoins(dz);
+    this._updatePowerup(dz);
 
     // ── Испытания: каждые CHALLENGE_MS меняем тип и поднимаем сложность ──────────
     this._challengeTimer += this._dtMs;

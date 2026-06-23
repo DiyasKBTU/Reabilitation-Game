@@ -7,6 +7,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str
     role: Literal["patient", "doctor", "admin"] = "patient"
+    consent: bool = False   # согласие на обработку персональных данных (обязательно при регистрации)
 
 
 class LoginIn(BaseModel):

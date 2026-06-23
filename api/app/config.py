@@ -1,12 +1,16 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
+# Небезопасный дефолт JWT-секрета: с ним токены подделываемы. В проде ОБЯЗАН быть переопределён
+# через переменную окружения JWT_SECRET (см. is_default_secret и предупреждение в main.py).
+DEFAULT_JWT_SECRET = "dev-secret-change-in-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     mongo_uri: str = "mongodb://localhost:27017/rehabgame"
-    jwt_secret: str = "dev-secret-change-in-production"
+    jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_expire_days: int = 30
     allowed_origins: str = "http://localhost:5173,http://localhost:5500,http://localhost:3000"
     admin_username: str = "admin"
@@ -32,6 +36,11 @@ class Settings(BaseSettings):
     @property
     def origins_list(self) -> List[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def is_default_secret(self) -> bool:
+        """JWT-секрет всё ещё дефолтный (небезопасно для прод-развёртывания)?"""
+        return self.jwt_secret == DEFAULT_JWT_SECRET
 
 
 settings = Settings()

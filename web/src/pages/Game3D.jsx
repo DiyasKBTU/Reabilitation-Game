@@ -6,6 +6,7 @@ import useSessionStore from '../stores/sessionStore';
 import { api } from '../api/index.js';
 import BlePanel from '../components/BlePanel';
 import GameIntro from '../components/GameIntro';
+import { GaugeIcon, AlertTriangleIcon } from '../components/icons';
 
 const CONTROLS = [
   { label: 'Руль', keys: 'наклон вбок · ← →' },
@@ -22,8 +23,38 @@ export default function Game3D() {
   const navigate = useNavigate();
   const { setLastSession } = useSessionStore();
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [started, setStarted] = useState(false);
   const [hud, setHud] = useState({ score: 0, lives: 3, level: 1, combo: 0, challenge: '' });
+  const pendingRef = useRef(null); // данные завершённой игры, ожидающие сохранения (для повтора)
+
+  // Сохранение результата с возможностью повтора: при сбое сети сессия НЕ теряется —
+  // данные игры остаются в pendingRef, игрок видит ошибку и может повторить (а не молча уходит).
+  async function saveSession(data) {
+    setSaving(true);
+    setSaveFailed(false);
+    try {
+      const session = await api.createSession({
+        score: data.score,
+        max_combo: data.maxCombo,
+        zone_hits: data.zoneHits,
+        duration_sec: data.durationSec,
+        level: data.level,
+        game_type: data.gameType || 'game2',
+        game_name: data.gameName || 'City Driver',
+        imu_time_series: data.imuTimeSeries || [],
+      });
+      setLastSession(session);
+      // replace: убираем экран игры из истории → «назад» из результата ведёт к выбору игр
+      navigate(`/session/${session.id}/result`, { replace: true });
+    } catch (err) {
+      console.error('Ошибка сохранения сессии:', err);
+      pendingRef.current = data;
+      setSaveFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     const container = containerRef.current;
@@ -41,29 +72,7 @@ export default function Game3D() {
     const engine = new Game3DEngine(canvas, {
       alpha: 0.2,
       onState: (s) => setHud({ score: s.score, lives: s.lives, level: s.level, combo: s.combo, challenge: s.challengeLabel }),
-      onGameOver: async (data) => {
-        setSaving(true);
-        try {
-          const session = await api.createSession({
-            score: data.score,
-            max_combo: data.maxCombo,
-            zone_hits: data.zoneHits,
-            duration_sec: data.durationSec,
-            level: data.level,
-            game_type: data.gameType || 'game2',
-            game_name: data.gameName || 'City Driver',
-            imu_time_series: data.imuTimeSeries || [],
-          });
-          setLastSession(session);
-          // replace: убираем экран игры из истории → «назад» из результата ведёт к выбору игр, а не перезапускает игру
-          navigate(`/session/${session.id}/result`, { replace: true });
-        } catch (err) {
-          console.error('Ошибка сохранения сессии:', err);
-          navigate('/game');
-        } finally {
-          setSaving(false);
-        }
-      },
+      onGameOver: (data) => saveSession(data),
     });
 
     engineRef.current = engine;
@@ -106,7 +115,8 @@ export default function Game3D() {
     const handler = (e) => {
       const s = e.detail?.smooth;
       if (s && engineRef.current) {
-        engineRef.current.updateInput(s.roll ?? 0, s.pitch ?? 0, s.yaw ?? 0);
+        // smooth → управление; calib (несглаженный) → запись в ML-ряд (сохраняет тремор)
+        engineRef.current.updateInput(s.roll ?? 0, s.pitch ?? 0, s.yaw ?? 0, e.detail.calib);
       }
     };
     bleService.addEventListener('data', handler);
@@ -125,7 +135,7 @@ export default function Game3D() {
       {!started && (
         <GameIntro
           title="City Driver"
-          icon="🏙️"
+          icon={GaugeIcon}
           color="from-emerald-500 to-teal-600"
           desc="3D-вождение с испытаниями: слалом, ворота, поток машин. Держите руль наклоном кисти, газуйте и тормозите наклоном вперёд-назад."
           controls={CONTROLS}
@@ -136,6 +146,19 @@ export default function Game3D() {
       {saving && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
           <div className="text-white text-lg font-medium">Сохранение результатов...</div>
+        </div>
+      )}
+      {saveFailed && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20 p-4">
+          <div className="card p-6 max-w-sm text-center">
+            <AlertTriangleIcon size={28} className="mx-auto mb-3 text-amber-500" />
+            <p className="font-medium text-slate-800">Не удалось сохранить результат</p>
+            <p className="text-sm text-slate-500 mt-1">Проверьте соединение — результат игры не потерян.</p>
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => navigate('/game')} className="btn-secondary flex-1">К играм</button>
+              <button onClick={() => saveSession(pendingRef.current)} className="btn-primary flex-1">Повторить</button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -7,15 +7,24 @@ import { PlayIcon, BluetoothIcon, ArrowLeftIcon, CheckCircleIcon } from './icons
  * сцену, но не запущен). Даёт игроку подготовиться: проверить датчик, прочитать
  * управление, при необходимости откалиброваться. Старт — только по кнопке.
  */
-export default function GameIntro({ title, icon, color, desc, controls = [], onStart, onBack }) {
+export default function GameIntro({ title, icon: Icon, color, desc, controls = [], onStart, onBack }) {
   const connected = useBleStore((s) => s.connected);
   const calibrate = useBleStore((s) => s.calibrate);
+  const applyNeutralOrZero = useBleStore((s) => s.applyNeutralOrZero);
+
+  // Перед стартом применяем ноль (если подключено устройство): сохранённую «нейтраль по
+  // умолчанию», а если её нет — текущую позу. Так платформа/машина не «уезжает» из-за базового
+  // наклона и накопленного до старта EMA, и при этом используется зафиксированный дефолт.
+  function handleStart() {
+    if (connected) applyNeutralOrZero();
+    onStart();
+  }
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-900/85 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
         <div className={`bg-gradient-to-br ${color} h-24 flex items-center justify-center`}>
-          <span className="text-5xl">{icon}</span>
+          {Icon && <Icon size={40} className="text-white" />}
         </div>
 
         <div className="p-6">
@@ -52,7 +61,7 @@ export default function GameIntro({ title, icon, color, desc, controls = [], onS
             <button onClick={onBack} className="btn-secondary">
               <ArrowLeftIcon size={16} /> Назад
             </button>
-            <button onClick={onStart} className="btn-primary flex-1 justify-center">
+            <button onClick={handleStart} className="btn-primary flex-1 justify-center">
               <PlayIcon size={16} /> Начать
             </button>
           </div>

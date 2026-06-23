@@ -79,7 +79,8 @@ ble.addEventListener("status",    e => setStatus(e.detail.text));
 ble.addEventListener("data",      e => engine.updateInput(
   e.detail.smooth.roll,
   e.detail.smooth.pitch,
-  e.detail.smooth.yaw
+  e.detail.smooth.yaw,
+  e.detail.calib   // несглаженный → запись ML-ряда
 ));
 ble.enableKeyboard();
 

@@ -1,0 +1,9 @@
+# Нормализация переводов строк → LF.
+# Важно для паритета ML-копий (api/app/ml ↔ ml-service/app): иначе CRLF/LF расходятся,
+# и обычный diff показывает идентичные по логике файлы как полностью разные.
+*.py  text eol=lf
+*.js  text eol=lf
+*.jsx text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
+*.html text eol=lf

@@ -95,6 +95,11 @@ rehabgame/
 
 Все эндпоинты с префиксом `/api`. Авторизация: `Authorization: Bearer <JWT>`.
 
+**Контроль доступа (владение).** Роуты, работающие с конкретным пациентом/сессией
+(`/patients/{id}`, `/sessions`, `/insights/{id}`), проверяют владение через
+`auth/deps.py: verify_patient_access`: admin → все; doctor → только свои (`doctor_id`); patient →
+только своя карточка (`user_id`). Защита от чтения чужих медданных по ID (IDOR).
+
 ### Auth
 | Метод | Путь | Тело | Ответ | Роль |
 |-------|------|------|-------|------|
@@ -113,15 +118,23 @@ rehabgame/
 ### Sessions
 | Метод | Путь | Описание | Роль |
 |-------|------|----------|------|
-| POST | `/sessions` | Сохранить сессию (считает features) | любая |
+| POST | `/sessions` | Сохранить сессию (считает features, гард валидности) | любая |
 | GET | `/sessions?patient_id&game_type&limit` | Список сессий | любая |
 | GET | `/sessions/{id}` | Одна сессия | любая |
 | PATCH | `/sessions/{id}/label` | Добавить метку (боль, усталость) | любая |
 
+**Гард качества сессии (`POST /sessions`).** «Пустой прогон» — игру запустили и не
+управляли, машина/платформа разбилась, сработал `onGameOver` → сохраняется сессия с
+ROM≈0 и почти нулевыми признаками. Такая сессия помечается `features.valid=False`
+(`api/app/ml/validity.py`: `ROM < 5°` ИЛИ `sampleCount < 10` ИЛИ `durationSec < 3` →
+невалидна). Сырой `imu_time_series` НЕ удаляется (CLAUDE.md) — невалидна только аналитика.
+Зеркалит логику `ingest/firebase.py` (game1 с ROM=0 → `valid=False`). Отдельный слой
+поверх вектора признаков → паритет `features.py` не затрагивается.
+
 ### Аналитика и прочее
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/insights/{patient_id}?game_type` | ML-аналитика пациента |
+| GET | `/insights/{patient_id}?game_type` | ML-аналитика пациента (по последней ВАЛИДНОЙ сессии) |
 | GET | `/leaderboard?game_type&limit` | Рейтинг |
 | GET | `/profile` | Профиль текущего пользователя |
 | PATCH | `/profile` | Обновить профиль |
@@ -145,6 +158,7 @@ rehabgame/
 ```
 username: str (unique)  email: str (unique)  password_hash: str
 role: patient|doctor|admin  platform_access: bool  database_access: bool
+consent: bool          # согласие на обработку ПДн (дано при регистрации; обязательно)
 created_at: datetime
 ```
 
@@ -159,7 +173,8 @@ source: str?  source_id: str?     # провенанс импорта (напр.
 ```
 patient_id: ObjectId  doctor_id: ObjectId?  game_type: str  game_name: str
 score: int  max_combo: int  zone_hits: int  duration_sec: float  level: int
-imu_time_series: [{t, r, p, y}]  features: dict?  label: dict?
+imu_time_series: [{t, r, p, y}]    # ряд углов, 25 Гц, НЕсглаженный (calib) — покрывает полосу тремора 3–12 Гц
+features: dict?  label: dict?
 axis_features: dict?               # multi-axis игры: {ось: features} по вторичным осям (напр. pitch в City Driver); не идут в модель
 device_metrics: dict?              # агрегаты устройства из Firebase (strengthIndex, movementCount, …)
 source: str?  source_id: str?      # провенанс импорта (идемпотентность); features.partial=True у импорта
@@ -185,6 +200,17 @@ patient_id: ObjectId  username: str  game_type: str  score: int  created_at: dat
 **Частотный анализ дрожи (v8.5):** `tremorFreqHz` — доминирующая частота дрожи в полосе 3–12 Гц,
 `tremorPower` — доля спектральной мощности в этой полосе (0..1). Считаются прямым ДПФ (чистый Python,
 без numpy → паритет тривиален). Это два самых важных признака модели аномалий (importance 0.21/0.18).
+
+### Валидность сессии (гард пустых прогонов)
+`api/app/ml/validity.py` — слой поверх вектора признаков (`features.py` не трогает, паритет цел):
+- `mark_validity(features)` — на записи (`POST /sessions`) снимает `valid` у сессий без реального
+  движения (ROM < 5° / sampleCount < 10 / durationSec < 3).
+- `is_analyzable(features)` — на чтении (`GET /insights`): `latest` выбирается как **первая
+  валидная** сессия (а не просто `sessions[0]`), baseline аномалий и тренды считаются только по
+  валидным сессиям. Если валидных нет — `/insights` отдаёт пустой ответ (дашборд: «нет данных»).
+- Частичные признаки Firebase (ROM-only, `sampleCount=0`, `partial=True`) гард по семплам/длительности
+  НЕ трогает — для них валидность определяется их собственным флагом (ROM=0 → `valid=False`, как в
+  `ingest/firebase.py`). Срабатывает и ретроспективно на старых сессиях с `valid=True`, ROM≈0.
 
 ### Модель аномалий
 - `api/app/ml/models/anomaly_model.joblib` — IsolationForest + RandomForest + RobustScaler
@@ -219,12 +245,14 @@ patient_id: ObjectId  username: str  game_type: str  score: int  created_at: dat
   Клавиатурный fallback (← →) идёт тем же путём через `BleService.enableKeyboard()`.
 - ROM-метр в City Driver обновляется императивно через `ref` (без re-render React каждый кадр).
 
-**Ось управления** определяется на бэкенде по `game_type` (`api/app/ml/games.py`).
-`GAME_AXIS` — ПЕРВИЧНАЯ ось (на ней работает модель аномалий, нарратив, рекомендации); сейчас
-обе игры — roll. `SECONDARY_AXES` — дополнительные оси multi-axis игр: City Driver пишет ещё и
-`pitch` (газ/тормоз). Вторичные оси считаются тем же `extract_features`, отдаются в `/api/insights`
-полем `axis_features` и показываются врачу («Вторая ось управления»), но в модель аномалий НЕ
-подаются (модель обучена на одной оси). См. `docs/ML_CONTRACT.md` §4.
+**Оси управления** определяются на бэкенде по `game_type` (`api/app/ml/games.py`, единый источник
+`ANALYZED_AXES`). ОСНОВНАЯ ось (первая) — на ней рекомендации и нарратив, её признаки в
+`Session.features`. Остальные оси (City Driver: ещё и `pitch` = газ/тормоз) анализируются ТЕМ ЖЕ
+детектором (`extract_features`/модель axis-agnostic) и агрегируются в общий вердикт
+(`api/app/ml/multiaxis.py`): `status` = худшая ось, флаги помечены осью, `leadAxis` = ведущая.
+Признаки неосновных осей лежат в `Session.axis_features`, отдаются в `/api/insights` полем
+`axis_features` (с собственным пер-осевым `anomaly`) и показываются врачу («Вторая ось управления»).
+Модель НЕ переобучалась — она axis-agnostic. См. `docs/ML_CONTRACT.md` §2/§4.
 
 **Standalone-тест без бэкенда:** `packages/game-3d/demo.html` (Three.js с CDN через importmap),
 `packages/game-2d/demo.html`.
@@ -308,15 +336,26 @@ start tools\imu-simulator\index.html
 import { BleService } from '@ble/index.js';
 const ble = new BleService({ alpha: 0.22 });
 ble.addEventListener('data', (e) => {
-  const { smooth } = e.detail;  // {roll, pitch, yaw} — отфильтрованные углы
+  const { smooth, calib, raw } = e.detail;  // все {roll, pitch, yaw}
+  // smooth — калибр.+сглаж. (EMA) → УПРАВЛЕНИЕ игрой (без джиттера)
+  // calib  — калибр., но НЕсглаж.   → ЗАПИСЬ в imu_time_series для ML (сохраняет тремор)
+  // raw    — сырые показания датчика (для zeroNow/диагностики)
 });
 await ble.connect();        // открывает браузерный диалог
 ble.enableKeyboard(3);      // ← → клавиши = fallback без устройства
+ble.setInvert({ roll: true });   // исправить зеркальное управление (вправо → влево)
 ```
 
-Ось управления: **roll** → game1 (Space Catcher) и game2 (City Driver, руление).
-Ось на признаки выбирается по `game_type` в `api/app/ml/games.py` — для будущей игры
-на pitch (сгибание/разгибание) достаточно дописать запись в `GAME_AXIS`.
+**Калибровка и направление** (сохраняются в браузере, `web/src/stores/bleStore.js` → localStorage):
+- **Инверсия осей** (`setInvert`) — фикс «наклон вправо → объект едет влево» (зависит от крепления
+  датчика). Применяется только к данным устройства, не к клавиатуре. Тумблеры на странице `/device`.
+- **Нейтраль по умолчанию** (`setOffsets`/`getOffsets`, кнопка «Зафиксировать» на `/device`) — поза,
+  которую пользователь один раз фиксирует как ноль; восстанавливается на старте каждой игры
+  (`bleStore.applyNeutralOrZero` в `GameIntro`).
+
+Оси управления: game1 (Space Catcher) — **roll**; game2 (City Driver) — **roll** (руль) +
+**pitch** (газ/тормоз). Анализируемые оси выбираются по `game_type` в `api/app/ml/games.py`
+(`ANALYZED_AXES`) — для новой игры/оси достаточно дописать запись туда, роуты подхватят.
 
 ---
 
@@ -324,9 +363,10 @@ ble.enableKeyboard(3);      // ← → клавиши = fallback без устр
 
 Включается флагом `DEMO_MODE=true` в `api/.env` (перезапустить бэкенд).
 
-- **Засев** (`api/app/demo/seed.py`, идемпотентно): демо-врач, демо-пациент и 5 пациентов с
-  готовыми сессиями (11–14 каждому). Профили дают разные ML-вердикты: норма, «Внимание»
-  (постинсультная асимметрия), «Критично» (тремор Паркинсона ~5 Гц и болевое обострение).
+- **Засев** (`api/app/demo/seed.py`, идемпотентно): демо-врач, демо-пациент и 5 детей с ДЦП с
+  готовыми сессиями (11–14 каждому). Профили (формы ДЦП) дают разные ML-вердикты: норма
+  (лёгкая спастическая с прогрессом), «Внимание» (спастический гемипарез/асимметрия),
+  «Критично» (атаксическая форма с обострением; дискинетическая форма с гиперкинезами ~4 Гц).
   Дашборд (KPI, аномалии, рекомендации, тренды, спектр дрожи) заполнен сразу.
 - **Вход** — кнопки на странице логина (появляются, когда `GET /api/health` вернул `demo_mode: true`):
   «Войти как врач» / «Войти как пациент».

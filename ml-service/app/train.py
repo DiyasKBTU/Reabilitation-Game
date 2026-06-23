@@ -66,6 +66,26 @@ def load_dataset() -> Tuple[np.ndarray, np.ndarray, str]:
     y_all: List[int] = []
     sources: List[str] = []
 
+    # ── Реальные данные ВАШЕГО устройства (MongoDB) ───────────────────────
+    # Приоритетный источник: сессии, реально сыгранные через приложение, с сырым рядом и
+    # меткой самочувствия пациента (ground truth). Если Mongo выключена/пуста — пропускаем.
+    try:
+        from data.mongo_loader import load_mongo_dataset  # type: ignore
+        mongo_series, mongo_labels, mstats = load_mongo_dataset()
+        n_mongo = 0
+        for s, lbl in zip(mongo_series, mongo_labels):
+            v = _series_to_vector(s)
+            if v:
+                X_all.append(v)
+                y_all.append(lbl)
+                n_mongo += 1
+        if n_mongo:
+            sources.append(f"MongoDB устройство ({mstats['normal']} норм., "
+                            f"{mstats['anomaly']} аном., реальные метки)")
+            print(f"[OK] Реальные данные устройства: {n_mongo} размеченных сессий")
+    except Exception as e:
+        print(f"[WARN] MongoDB-данные недоступны ({e}).")
+
     # ── Реальные данные (PAMAP2) ──────────────────────────────────────────
     try:
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -105,6 +125,36 @@ def load_dataset() -> Tuple[np.ndarray, np.ndarray, str]:
     return np.array(X_all, dtype=float), np.array(y_all, dtype=int), source_str
 
 
+def _save_dataset_artifact(X: np.ndarray, y: np.ndarray, source: str) -> None:
+    """Сохраняет нормализованный датасет + отчёт о составе (воспроизводимость/аудит).
+
+    Артефакт: data/dataset_latest.npz (X — векторы признаков, y — метки, feature_keys, source).
+    Отчёт: data/dataset_latest_report.json (число норм/аномалий, средние по признакам, источник).
+    Признаки масштабирует RobustScaler уже в самой модели (и при инференсе) — здесь хранятся
+    «сырые» признаки, чтобы датасет был самодостаточным и переобучаемым.
+    """
+    import json
+    import time
+    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+    os.makedirs(data_dir, exist_ok=True)
+    npz_path = os.path.join(data_dir, "dataset_latest.npz")
+    np.savez_compressed(npz_path, X=X, y=y,
+                        feature_keys=np.array(FEATURE_KEYS), source=source)
+    report = {
+        "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source": source,
+        "n_total": int(len(y)),
+        "n_normal": int((y == 0).sum()) if len(y) else 0,
+        "n_anomaly": int((y == 1).sum()) if len(y) else 0,
+        "feature_keys": FEATURE_KEYS,
+        "feature_means": ({k: round(float(X[:, i].mean()), 3) for i, k in enumerate(FEATURE_KEYS)}
+                          if len(X) else {}),
+    }
+    with open(os.path.join(data_dir, "dataset_latest_report.json"), "w", encoding="utf-8") as fh:
+        json.dump(report, fh, ensure_ascii=False, indent=2)
+    print(f"[OK] Датасет сохранён: {npz_path} (+ dataset_latest_report.json)")
+
+
 # ─── Обучение ───────────────────────────────────────────────────────────────
 
 def main():
@@ -119,6 +169,15 @@ def main():
         print("Нужны зависимости: pip install -r requirements.txt")
         return
 
+    # Windows-консоль (cp1251) роняет emoji-print из загрузчиков (PAMAP2: ⚠/📥/✅) с
+    # UnicodeEncodeError, который выше глотался как «данные недоступны» → молчаливый откат
+    # на синтетику. Переключаем stdout/stderr на utf-8, чтобы реальные данные реально грузились.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
+
     t0 = time.time()
     print("=" * 60)
     print("RehabGame ML — Обучение модели аномалий v2")
@@ -130,6 +189,9 @@ def main():
     n_anom  = int((y == 1).sum())
     print(f"\nДатасет: {n_total} сессий | норма={n_norm} | аномалия={n_anom}")
     print(f"Источники: {source}")
+
+    # Сохраняем нормализованный датасет + отчёт (всегда, даже если мало для обучения).
+    _save_dataset_artifact(X, y, source)
 
     if n_total < 20:
         print("[ERR]Слишком мало данных для обучения.")
@@ -198,9 +260,14 @@ def main():
     #   - validation="none", пока нет клинически размеченных данных.
     # ROC-AUC выше посчитан на синтетике (label = параметры генератора) и НЕ является
     # доказательством клинической точности — это указано в metrics_note.
-    is_synthetic_only = "PAMAP2" not in source
-    model_version = "v6-2026-06-08-spectral" + ("-synthetic" if is_synthetic_only else "-mixed")
-    validation = "none"  # появится "clinical" только после §6 ML_SPEC (реальные метки)
+    has_real = ("PAMAP2" in source) or ("MongoDB" in source)
+    is_synthetic_only = not has_real
+    # Реальные метки самочувствия пациента (боль/усталость) из приложения — это ground truth,
+    # хоть и не клиническая валидация. Помечаем validation честно: "self-reported", если в
+    # источнике есть размеченные сессии устройства; иначе "none".
+    has_device_labels = "реальные метки" in source
+    model_version = "v7-2026-06-10-realdata" + ("-synthetic" if is_synthetic_only else "-mixed")
+    validation = "self-reported" if has_device_labels else "none"
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     model_obj = {

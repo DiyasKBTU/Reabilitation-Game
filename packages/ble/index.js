@@ -43,14 +43,27 @@ function normalizeAngle(v) {
 export class BleService extends EventTarget {
   /**
    * @param {object} options
-   * @param {number} options.alpha       - вес нового значения в EMA (0..1). По умолч. 0.22
-   * @param {string} options.deviceName  - имя BLE-устройства для фильтра поиска
+   * @param {number}  options.alpha        - вес нового значения в EMA (0..1). По умолч. 0.22
+   * @param {string}  options.deviceName   - имя BLE-устройства для фильтра поиска
+   * @param {boolean} options.invertRoll   - инвертировать ось крена (если «вправо» едет влево)
+   * @param {boolean} options.invertPitch  - инвертировать ось тангажа (газ/тормоз наоборот)
+   * @param {boolean} options.invertYaw    - инвертировать ось рыскания
    */
-  constructor({ alpha = 0.22, deviceName = DEVICE_NAME } = {}) {
+  constructor({ alpha = 0.22, deviceName = DEVICE_NAME,
+                invertRoll = false, invertPitch = false, invertYaw = false } = {}) {
     super();
 
     this.alpha      = alpha;
     this.deviceName = deviceName;
+
+    // Инверсия осей: исправляет зеркальное управление (наклон вправо → объект едет влево).
+    // Зависит от того, как физически закреплён датчик на кисти, поэтому это настройка, а не
+    // константа. Применяется ТОЛЬКО к данным реального устройства (не к клавиатуре) после
+    // вычитания нуля, перед сглаживанием — так инверсия влияет и на управление, и на ML-запись
+    // (запись остаётся «истинным» движением). Сохраняется на стороне web (bleStore → localStorage).
+    this.invertRoll  = invertRoll;
+    this.invertPitch = invertPitch;
+    this.invertYaw   = invertYaw;
 
     // Публичное состояние — читать напрямую
     this.connected  = false;
@@ -60,6 +73,15 @@ export class BleService extends EventTarget {
     this.smoothYaw  = 0;
     this.smoothPitch = 0;
     this.smoothRoll  = 0;
+
+    // Программное обнуление («ноль = текущая поза кисти»). Захватывается zeroNow() на старте
+    // игры и вычитается из входящих углов ДО сглаживания — платформа/машина не «уезжает»
+    // из-за ненулевого базового наклона датчика и накопленного до старта EMA. Не зависит от
+    // прошивки: аппаратный calibrate() (CALIB) и клиентский zeroNow() НЕ комбинируются —
+    // см. их доки (иначе была бы двойная коррекция).
+    this.yawOffset   = 0;
+    this.pitchOffset = 0;
+    this.rollOffset  = 0;
 
     // Приватное
     this._device    = null;
@@ -133,7 +155,51 @@ export class BleService extends EventTarget {
   // ─── Команды устройства ────────────────────────────────────────────────────
 
   calibrate() {
+    // Аппаратный ноль на самом ESP32: устройство становится точкой отсчёта. Клиентский
+    // offset при этом сбрасываем — иначе двойная коррекция (и устройство, и клиент вычтут
+    // базовый наклон). Сглаживание тоже обнуляем, чтобы старое значение не «вытекало».
+    this.yawOffset = this.pitchOffset = this.rollOffset = 0;
+    this.smoothYaw = this.smoothPitch = this.smoothRoll = 0;
     return this._sendCommand("CALIB");
+  }
+
+  /**
+   * Программный ноль: ТЕКУЩАЯ поза кисти становится нулём (offset = последние сырые углы),
+   * накопленный EMA сбрасывается. Чисто клиентский, без команды устройству — поэтому нет
+   * задержки и нет конфликта с аппаратным CALIB. Вызывается при старте игры, чтобы убрать
+   * лёгкое «уезжание» платформы/машины в начальной позиции из-за ненулевого базового наклона.
+   */
+  zeroNow() {
+    this.yawOffset   = this.yaw;
+    this.pitchOffset = this.pitch;
+    this.rollOffset  = this.roll;
+    this.smoothYaw = this.smoothPitch = this.smoothRoll = 0;
+  }
+
+  /**
+   * Включить/выключить инверсию осей. Передавайте только нужные поля.
+   * Пример: setInvert({ roll: true }) — исправить «наклон вправо → едет влево».
+   */
+  setInvert({ roll, pitch, yaw } = {}) {
+    if (roll  !== undefined) this.invertRoll  = !!roll;
+    if (pitch !== undefined) this.invertPitch = !!pitch;
+    if (yaw   !== undefined) this.invertYaw   = !!yaw;
+  }
+
+  /**
+   * Явно задать ноль (offset) — для восстановления сохранённой «нейтрали по умолчанию».
+   * Передавайте сырые углы позы, которую считаем нейтральной. Сбрасывает EMA.
+   */
+  setOffsets({ yaw, pitch, roll } = {}) {
+    if (yaw   !== undefined) this.yawOffset   = yaw;
+    if (pitch !== undefined) this.pitchOffset = pitch;
+    if (roll  !== undefined) this.rollOffset  = roll;
+    this.smoothYaw = this.smoothPitch = this.smoothRoll = 0;
+  }
+
+  /** Текущий ноль (offset) — чтобы web мог сохранить «нейтраль по умолчанию» в localStorage. */
+  getOffsets() {
+    return { yaw: this.yawOffset, pitch: this.pitchOffset, roll: this.rollOffset };
   }
 
   resetYaw() {
@@ -161,20 +227,35 @@ export class BleService extends EventTarget {
 
     if (parts.length !== 3 || parts.some(Number.isNaN)) return;
 
-    this.yaw   = normalizeAngle(parts[0]);
+    this.yaw   = normalizeAngle(parts[0]);   // сырые показания датчика (нужны zeroNow и диагностике)
     this.pitch = parts[1];
     this.roll  = parts[2];
 
-    // EMA-сглаживание: smoothed = prev*(1-α) + new*α
+    // Калибровка: «ноль = поза в момент zeroNow()». Вычитаем offset ДО сглаживания.
+    let cy = normalizeAngle(this.yaw - this.yawOffset);
+    let cp = this.pitch - this.pitchOffset;
+    let cr = this.roll  - this.rollOffset;
+
+    // Инверсия осей (исправление зеркального управления). После калибровки, до сглаживания —
+    // чтобы и управление (smooth), и ML-запись (calib) отражали истинное направление движения.
+    if (this.invertYaw)   cy = -cy;
+    if (this.invertPitch) cp = -cp;
+    if (this.invertRoll)  cr = -cr;
+
+    // EMA-сглаживание откалиброванного сигнала: smoothed = prev*(1-α) + new*α
     const a = this.alpha, b = 1 - a;
-    this.smoothYaw   = this.smoothYaw   * b + this.yaw   * a;
-    this.smoothPitch = this.smoothPitch * b + this.pitch * a;
-    this.smoothRoll  = this.smoothRoll  * b + this.roll  * a;
+    this.smoothYaw   = this.smoothYaw   * b + cy * a;
+    this.smoothPitch = this.smoothPitch * b + cp * a;
+    this.smoothRoll  = this.smoothRoll  * b + cr * a;
 
     this.dispatchEvent(new CustomEvent("data", {
       detail: {
-        raw:   { yaw: this.yaw, pitch: this.pitch, roll: this.roll },
-        smooth: { yaw: this.smoothYaw, pitch: this.smoothPitch, roll: this.smoothRoll },
+        raw:   { yaw: this.yaw, pitch: this.pitch, roll: this.roll },        // истинные показания датчика
+        // Калиброванный, но НЕ сглаженный сигнал. Управление берёт smooth (без джиттера),
+        // а ML-запись — calib: EMA — это low-pass, он гасит тремор 4–8 Гц ДО записи, поэтому
+        // в imu_time_series должен идти именно несглаженный угол (см. features._spectral_tremor).
+        calib: { yaw: cy, pitch: cp, roll: cr },
+        smooth: { yaw: this.smoothYaw, pitch: this.smoothPitch, roll: this.smoothRoll }, // калибр. + сглаж. (управление)
         timestamp: Date.now()
       }
     }));
@@ -215,6 +296,7 @@ export class BleService extends EventTarget {
         this.dispatchEvent(new CustomEvent("data", {
           detail: {
             raw:    { yaw: this.yaw, pitch: this.pitch, roll: this.roll },
+            calib:  { yaw: normalizeAngle(this.yaw - this.yawOffset), pitch: this.pitch - this.pitchOffset, roll: this.roll - this.rollOffset },
             smooth: { yaw: this.smoothYaw, pitch: this.smoothPitch, roll: this.smoothRoll },
             timestamp: Date.now(),
             source: "keyboard"

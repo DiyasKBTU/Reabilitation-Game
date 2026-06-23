@@ -12,6 +12,9 @@ class User(Document):
     role: Literal["patient", "doctor", "admin"] = "patient"
     platform_access: bool = True
     database_access: bool = True
+    # Согласие на обработку персональных данных (дано при регистрации). Для медданных это
+    # требование этики/безопасности; опционально (default False) — старые учётки не ломаются.
+    consent: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:

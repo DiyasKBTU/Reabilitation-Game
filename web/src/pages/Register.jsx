@@ -4,7 +4,7 @@ import { api } from '../api/index.js';
 import useAuthStore from '../stores/authStore';
 
 export default function Register() {
-  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'patient' });
+  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'patient', consent: false });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuthStore();
@@ -52,8 +52,16 @@ export default function Register() {
             <option value="doctor">Врач</option>
           </select>
         </div>
+        <label className="flex items-start gap-2 text-sm text-slate-600 cursor-pointer">
+          <input type="checkbox" className="mt-0.5 shrink-0" checked={form.consent}
+            onChange={(e) => setForm({ ...form, consent: e.target.checked })} required />
+          <span>
+            Я даю согласие на обработку персональных данных и понимаю, что аналитика носит
+            вспомогательный характер и не является медицинским диагнозом.
+          </span>
+        </label>
         {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-        <button type="submit" disabled={loading} className="btn-primary w-full py-2.5">
+        <button type="submit" disabled={loading || !form.consent} className="btn-primary w-full py-2.5">
           {loading ? 'Регистрация...' : 'Зарегистрироваться'}
         </button>
       </form>

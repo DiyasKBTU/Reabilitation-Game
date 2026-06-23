@@ -17,6 +17,12 @@
  * engine.destroy();
  */
 
+// Частота записи IMU-ряда для ML. 25 Гц (Nyquist 12.5 Гц) покрывает клиническую полосу
+// тремора 3–12 Гц; на прежних 5 Гц (Nyquist 2.5 Гц) спектральные признаки tremorPower/
+// tremorFreqHz структурно зануляются (features._spectral_tremor). Совпадает с fs_hz синтетики
+// обучения (25 Гц) → запись приходит в то же распределение, на котором обучена модель.
+const IMU_RECORD_MS = 40;
+
 export class Game2DEngine {
   // ─── Конструктор ──────────────────────────────────────────────────────────
 
@@ -46,6 +52,11 @@ export class Game2DEngine {
     this._smoothRoll  = 0;
     this._smoothPitch = 0;
     this._smoothYaw   = 0;
+    // Канал ЗАПИСИ для ML: калиброванный, но НЕсглаженный угол (управление — по _smooth*,
+    // запись — по _rec*). Сглаживание стёрло бы тремор до попадания в imu_time_series.
+    this._recRoll  = 0;
+    this._recPitch = 0;
+    this._recYaw   = 0;
     this._bleInput    = false;  // true = есть внешний вход (BLE/калибр. клавиатура); иначе своя клавиатура
 
     // Игровые состояния
@@ -88,6 +99,11 @@ export class Game2DEngine {
     this._goldenBall  = null;
     this._goldenTimer = 0;
 
+    // Параллакс-звёздный фон (глубина) и бонус-сердце (восстановление жизни)
+    this._stars      = [];
+    this._heart      = null;
+    this._heartTimer = 0;
+
     this._keys = {};
 
     // Привязки для removeEventListener
@@ -113,7 +129,14 @@ export class Game2DEngine {
    * @param {number} [pitchDeg=0]
    * @param {number} [yawDeg=0]
    */
-  updateInput(rollDeg, pitchDeg = 0, yawDeg = 0) {
+  /**
+   * @param {number} rollDeg   сглаженный угол (управление)
+   * @param {number} [pitchDeg]
+   * @param {number} [yawDeg]
+   * @param {{roll:number,pitch:number,yaw:number}} [rec] калиброванный НЕсглаженный угол для
+   *        записи в ML-ряд (BLE-поле `calib`). Если не передан — пишем сглаженный (демо/keyboard).
+   */
+  updateInput(rollDeg, pitchDeg = 0, yawDeg = 0, rec = null) {
     this._bleInput = true;  // пришёл внешний вход → управление от него, не от своей клавиатуры
     this._roll  = this._normalizeAngle(rollDeg);
     this._pitch = pitchDeg;
@@ -123,6 +146,12 @@ export class Game2DEngine {
     this._smoothRoll  = this._smoothRoll  * a + this._roll  * this._alpha;
     this._smoothPitch = this._smoothPitch * a + this._pitch * this._alpha;
     this._smoothYaw   = this._smoothYaw   * a + this._yaw   * this._alpha;
+
+    // Запись — несглаженный калиброванный угол (сохраняет тремор для ML). Fallback на
+    // управляющий сигнал, если устройство не прислало calib (старый вызов/демо).
+    this._recRoll  = rec ? this._normalizeAngle(rec.roll)  : this._smoothRoll;
+    this._recPitch = rec ? rec.pitch                       : this._smoothPitch;
+    this._recYaw   = rec ? this._normalizeAngle(rec.yaw)   : this._smoothYaw;
   }
 
   /** Запустить игру (с меню → игра) */
@@ -186,6 +215,22 @@ export class Game2DEngine {
     this._catcher.y = this._h - 82;
     if (this._catcher.x === 0) {
       this._catcher.x = this._w / 2 - this._catcher.w / 2;
+    }
+    this._initStars();
+  }
+
+  /** Параллакс-звёзды: плотность пропорциональна площади; дальние тусклее и медленнее. */
+  _initStars() {
+    const count = Math.max(40, Math.round((this._w * this._h) / 9000));
+    this._stars = [];
+    for (let i = 0; i < count; i++) {
+      this._stars.push({
+        x: Math.random() * this._w,
+        y: Math.random() * this._h,
+        r: Math.random() * 1.4 + 0.3,
+        sp: 0.05 + Math.random() * 0.35,
+        tw: Math.random() * Math.PI * 2,
+      });
     }
   }
 
@@ -266,8 +311,11 @@ export class Game2DEngine {
     this._zoneHits     = 0;
     this._goldenBall   = null;
     this._goldenTimer  = 0;
+    this._heart        = null;
+    this._heartTimer   = 0;
     this._imuTimeSeries  = [];
     this._imuAccumMs     = 0;
+    this._recRoll = 0; this._recPitch = 0; this._recYaw = 0;
 
     this._balls.length     = 0;
     this._bombs.length     = 0;
@@ -312,13 +360,13 @@ export class Game2DEngine {
     // Запись по реальному времени (а не по числу кадров) → плотность IMU-сэмплов
     // не зависит от частоты обновления экрана.
     this._imuAccumMs += this._dtMs;
-    if (this._imuAccumMs >= 200) { // ~5 Гц
+    if (this._imuAccumMs >= IMU_RECORD_MS) { // 25 Гц — покрывает полосу тремора
       this._imuAccumMs = 0;
       this._imuTimeSeries.push({
         t: Date.now() - this._gameStartTime,
-        r: parseFloat(this._smoothRoll.toFixed(2)),
-        p: parseFloat(this._smoothPitch.toFixed(2)),
-        y: parseFloat(this._smoothYaw.toFixed(2))
+        r: parseFloat(this._recRoll.toFixed(2)),
+        p: parseFloat(this._recPitch.toFixed(2)),
+        y: parseFloat(this._recYaw.toFixed(2))
       });
     }
   }
@@ -360,6 +408,7 @@ export class Game2DEngine {
       const center = this._catcher.x + this._catcher.w / 2;
       const norm = Math.max(-1, Math.min(1, (center - this._w / 2) / (this._w / 2)));
       this._smoothRoll = norm * 45;
+      this._recRoll = this._smoothRoll;  // без устройства тремора нет — пишем синтез-угол
     }
   }
 
@@ -430,7 +479,7 @@ export class Game2DEngine {
         this._combo      = 0;
         this._comboTimer = 0;
         this._spawnParticles(bomb.x, bomb.y, "#ff9f1c", 16);
-        this._spawnPopup(bomb.x, bomb.y - 10, "-1 ❤️", "#ff9f1c");
+        this._spawnPopup(bomb.x, bomb.y - 10, "-1", "#ff9f1c");
         Object.assign(bomb, this._createBomb(-Math.random() * 320 - 120));
         if (this._lives <= 0) this._triggerGameOver();
       }
@@ -475,6 +524,31 @@ export class Game2DEngine {
     if (gb.y - gb.r > this._h) this._goldenBall = null;
   }
 
+  /** Бонус-сердце: изредка падает, ловится платформой → +1 жизнь (макс 3). */
+  _updateHeart() {
+    const f = this._dtFactor;
+    const HEART_INTERVAL = 2600;
+    this._heartTimer += f;
+    if (this._heartTimer >= HEART_INTERVAL && !this._heart && this._lives < 3) {
+      this._heartTimer = 0;
+      this._heart = { x: 60 + Math.random() * (this._w - 120), y: -40, r: 16, speed: 2.2, pulse: 0 };
+    }
+    if (!this._heart) return;
+    const h = this._heart;
+    h.y += h.speed * f;
+    h.pulse += 0.1 * f;
+    const caught = h.y + h.r >= this._catcher.y
+      && h.x >= this._catcher.x && h.x <= this._catcher.x + this._catcher.w;
+    if (caught) {
+      this._lives = Math.min(3, this._lives + 1);
+      this._spawnParticles(h.x, h.y, "#ff6b9d", 18);
+      this._spawnPopup(h.x, h.y - 12, "+1 жизнь", "#ff6b9d");
+      this._heart = null;
+      return;
+    }
+    if (h.y - h.r > this._h) this._heart = null;
+  }
+
   _triggerGameOver() {
     this._gameOver = true;
     if (this._sessionSaved) return;
@@ -501,6 +575,7 @@ export class Game2DEngine {
     this._updateBalls();
     this._updateBombs();
     this._updateGoldenBall();
+    this._updateHeart();
   }
 
   // ─── Draw ─────────────────────────────────────────────────────────────────
@@ -523,13 +598,41 @@ export class Game2DEngine {
     const ctx = this._ctx;
     if (this._bg.complete && this._bg.naturalWidth > 0) {
       ctx.drawImage(this._bg, 0, 0, this._w, this._h);
-    } else {
-      const g = ctx.createLinearGradient(0, 0, 0, this._h);
-      g.addColorStop(0, "#050816");
-      g.addColorStop(1, "#140326");
-      ctx.fillStyle = g;
+      return;
+    }
+    const g = ctx.createLinearGradient(0, 0, 0, this._h);
+    g.addColorStop(0,   "#050816");
+    g.addColorStop(0.6, "#0b0a2a");
+    g.addColorStop(1,   "#1a0530");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, this._w, this._h);
+
+    // Туманность — мягкие цветные пятна для глубины
+    for (const [bx, by, br, col] of [
+      [this._w * 0.2, this._h * 0.3, this._w * 0.35, "rgba(59,130,246,0.10)"],
+      [this._w * 0.8, this._h * 0.55, this._w * 0.4, "rgba(168,85,247,0.10)"],
+    ]) {
+      const ng = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+      ng.addColorStop(0, col);
+      ng.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = ng;
       ctx.fillRect(0, 0, this._w, this._h);
     }
+
+    // Звёзды: лёгкий параллакс-дрейф вниз + мерцание
+    if (!this._stars.length) this._initStars();
+    const f = this._dtFactor;
+    ctx.fillStyle = "#cfe3ff";
+    for (const s of this._stars) {
+      s.y += s.sp * f;
+      if (s.y > this._h) { s.y = 0; s.x = Math.random() * this._w; }
+      s.tw += 0.05 * f;
+      ctx.globalAlpha = 0.5 + Math.sin(s.tw) * 0.4;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   _drawCatcher() {
@@ -665,6 +768,34 @@ export class Game2DEngine {
     ctx.restore();
   }
 
+  /** Векторное сердце (вместо эмодзи): для HUD-жизней и бонуса-сердца. */
+  _drawHeartShape(ctx, x, y, s) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + s * 0.3);
+    ctx.bezierCurveTo(x,        y,            x - s, y,            x - s, y + s * 0.3);
+    ctx.bezierCurveTo(x - s,    y + s * 0.62, x,     y + s * 0.9,  x,     y + s * 1.1);
+    ctx.bezierCurveTo(x,        y + s * 0.9,  x + s, y + s * 0.62, x + s, y + s * 0.3);
+    ctx.bezierCurveTo(x + s,    y,            x,     y,            x,     y + s * 0.3);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  _drawHeart() {
+    if (!this._heart) return;
+    const ctx = this._ctx;
+    const h = this._heart;
+    const s = h.r * (1 + Math.sin(h.pulse) * 0.08);
+    ctx.save();
+    ctx.shadowColor = "#ff4d8d";
+    ctx.shadowBlur  = 14 + Math.sin(h.pulse) * 6;
+    const grad = ctx.createLinearGradient(h.x, h.y - s, h.x, h.y + s);
+    grad.addColorStop(0, "#ff9ec4");
+    grad.addColorStop(1, "#e11d6f");
+    ctx.fillStyle = grad;
+    this._drawHeartShape(ctx, h.x, h.y, s);
+    ctx.restore();
+  }
+
   _drawParticles() {
     const ctx = this._ctx;
     for (const p of this._particles) {
@@ -775,9 +906,11 @@ export class Game2DEngine {
     ctx.font = "bold 22px Arial";
     ctx.fillText(`Level: ${this._currentLevel}`, 36, 170);
 
-    let livesStr = "";
-    for (let i = 0; i < 3; i++) livesStr += i < this._lives ? "❤️" : "🖤";
-    ctx.fillText(livesStr, 36, 200);
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i < this._lives ? "#ff4d8d" : "rgba(255,255,255,0.18)";
+      this._drawHeartShape(ctx, 44 + i * 30, 186, 9);
+    }
+    ctx.fillStyle = "#fff";
 
     if (this._combo >= 2) {
       const mult = this._getComboMultiplier();
@@ -839,6 +972,7 @@ export class Game2DEngine {
       for (const ball of this._balls) this._drawBall(ball);
       this._drawBombs();
       this._drawGoldenBall();
+      this._drawHeart();
       this._drawParticles();
       this._drawPopups();
       this._drawHud();

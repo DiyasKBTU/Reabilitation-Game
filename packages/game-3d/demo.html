@@ -123,7 +123,7 @@ romLoop();
 
 const ble = new BleService({ alpha: 0.2 });
 ble.addEventListener('status', e => setStatus(e.detail.text));
-ble.addEventListener('data', e => engine.updateInput(e.detail.smooth.roll, e.detail.smooth.pitch, e.detail.smooth.yaw));
+ble.addEventListener('data', e => engine.updateInput(e.detail.smooth.roll, e.detail.smooth.pitch, e.detail.smooth.yaw, e.detail.calib));
 // Клавиатурой управляет сам движок (A/D — руль, W/S — газ/тормоз); BLE-клавиатуру не включаем,
 // чтобы не было двойного источника ввода. Кнопка BLE подключает реальное устройство.
 document.getElementById('bleBtn').addEventListener('click', () => ble.connect());

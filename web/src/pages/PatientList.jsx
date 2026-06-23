@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/index.js';
-import { PlusIcon, SearchIcon, UsersIcon, ChevronRightIcon } from '../components/icons';
+import { PlusIcon, SearchIcon, UsersIcon, ChevronRightIcon, AlertTriangleIcon } from '../components/icons';
 
 function NewPatientModal({ onClose, onCreated }) {
   const [form, setForm] = useState({ full_name: '', diagnosis: '', age: '', gender: '' });
@@ -81,15 +81,19 @@ export default function PatientList() {
   const [patients, setPatients] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [showModal, setShowModal] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
+    setLoading(true);
+    setError(false);
     api.getPatients()
       .then(setPatients)
-      .catch(() => {})
+      .catch(() => setError(true))  // ошибка сети не маскируется под пустой список
       .finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
 
   const filtered = patients.filter((p) =>
     p.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -108,7 +112,7 @@ export default function PatientList() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Пациенты</h1>
-          {!loading && <p className="text-sm text-slate-500 mt-0.5">{patients.length} в наблюдении</p>}
+          {!loading && !error && <p className="text-sm text-slate-500 mt-0.5">{patients.length} в наблюдении</p>}
         </div>
         <button onClick={() => setShowModal(true)} className="btn-primary">
           <PlusIcon size={16} /> Добавить
@@ -127,6 +131,13 @@ export default function PatientList() {
 
       {loading ? (
         <div className="text-slate-400 text-center py-12">Загрузка...</div>
+      ) : error ? (
+        <div className="card text-center py-14">
+          <AlertTriangleIcon size={36} className="mx-auto mb-3 text-amber-400" />
+          <div className="text-slate-600 font-medium">Не удалось загрузить список пациентов</div>
+          <div className="text-sm text-slate-400 mt-1">Проверьте соединение и попробуйте ещё раз.</div>
+          <button onClick={() => setReloadKey((k) => k + 1)} className="btn-primary text-sm mt-4">Повторить</button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="card text-center py-14">
           <UsersIcon size={36} className="mx-auto mb-3 text-slate-300" />

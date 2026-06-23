@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,9 +8,18 @@ from .routes import auth, patients, sessions, insights, leaderboard, profile, ad
 from .ml.router import router as ml_router
 from .ml.anomaly import preload_model
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Безопасность: с дефолтным JWT-секретом токены подделываемы. Громко предупреждаем —
+    # в проде JWT_SECRET ОБЯЗАН быть задан через окружение (см. config.is_default_secret).
+    if settings.is_default_secret:
+        logger.warning(
+            "JWT_SECRET не задан — используется небезопасный дефолт. "
+            "Для боевого развёртывания задайте JWT_SECRET (мин. 32 случайных символа) в окружении."
+        )
     await connect_db()
     preload_model()
     await _seed_admin()

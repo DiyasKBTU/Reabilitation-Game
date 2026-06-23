@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional, Callable
 T = {
     "SYMMETRY_ATTENTION": 0.20, "SYMMETRY_CRITICAL": 0.40,
     "ROM_LOW": 30, "ROM_CRITICAL": 15, "SMOOTHNESS_LOW": 0.6,
-    "TREMOR_HIGH": 0.4, "PAUSE_HIGH": 0.5, "ENDURANCE_LOW": 40,
+    "TREMOR_HIGH": 0.4, "TREMOR_POWER_HIGH": 0.03, "PAUSE_HIGH": 0.5, "ENDURANCE_LOW": 40,
     "PEAKVEL_LOW": 40, "REPS_LOW": 15,
 }
 
@@ -162,12 +162,20 @@ def build_recommendations(features: Dict[str, Any], history: Optional[List[Dict]
                       "recommendation": "Снизить уровень/скорость игры, делать медленные контролируемые повторы. Сделать упор на качество траектории, а не на скорость и очки."})
 
     tr = _num(f.get("tremorIndex"))
-    if tr > T["TREMOR_HIGH"]:
+    tr_power = _num(f.get("tremorPower"))
+    tr_freq = _num(f.get("tremorFreqHz"))
+    if tr > T["TREMOR_HIGH"] or tr_power > T["TREMOR_POWER_HIGH"]:
+        # Частотный анализ (FFT) уточняет паттерн: 4–6 Гц — ближе к тремору покоя.
+        evidence = None
+        if tr_freq > 0:
+            evidence = (f"частотный анализ: доминирующая частота ~{_r1(tr_freq)} Гц, "
+                        f"{round(tr_power * 100)}% мощности движения в полосе дрожи (3–12 Гц)")
         items.append({"id": "tremor_high", "area": "neuro",
-                      "severity": "critical" if tr > 0.65 else "attention", "priority": 5,
+                      "severity": "critical" if (tr > 0.65 or tr_power > 0.05) else "attention", "priority": 5,
                       "targetMetric": "tremorIndex", "current": _r2(tr), "target": 0.3,
                       "finding": f"Заметное дрожание (тремор {_r2(tr)} из 1.0).",
-                      "recommendation": "Короткие сессии с опорой предплечья/локтя на стол для стабилизации. Добавить отдых между подходами; при нарастании — отметить для невролога."})
+                      "recommendation": "Короткие сессии с опорой предплечья/локтя на стол для стабилизации. Добавить отдых между подходами; при нарастании — отметить для невролога.",
+                      "evidence": evidence})
 
     pr = _num(f.get("pauseRatio"))
     if pr > T["PAUSE_HIGH"]:

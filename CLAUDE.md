@@ -9,6 +9,9 @@
 **RehabGame** — реабилитационная платформа. Пациент управляет игрой движением кисти
 (ESP32-C3 + IMU через BLE). Врач видит ML-аналитику движений.
 
+**Целевая аудитория — дети с ДЦП** (детский церебральный паралич): тренировка крупной моторики
+руки. Демо/тест-данные используют формы ДЦП (спастическая, гемипарез, дискинетическая, атаксическая).
+
 ```
 tools/imu-*  →  packages/ble  →  web/ (React)  →  api/ (FastAPI)  →  MongoDB
                                                         └── api/app/ml/  (ML встроен)
@@ -92,7 +95,9 @@ tools/imu-*  →  packages/ble  →  web/ (React)  →  api/ (FastAPI)  →  Mon
 | BLE без устройства | `packages/game-2d/demo.html` → keyboard fallback должен работать |
 | IMU симулятор | `tools/imu-simulator/` → сгенерировать → "Открыть в ML Debug" |
 | Frontend сборка | `cd web && npm run build` |
+| Frontend тесты (vitest + RTL) | `cd web && npm run test` |
 | Бэкенд синтаксис | `venv\Scripts\python.exe -m py_compile api/app/main.py` |
+| Тест-данные ДЦП (не демо; нужна Mongo) | `venv\Scripts\python.exe api/scripts/seed_test_data.py [--reset]` |
 
 ---
 

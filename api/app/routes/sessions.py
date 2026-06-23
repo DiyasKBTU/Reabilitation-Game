@@ -6,20 +6,25 @@ from ..models.user import User
 from ..models.patient import Patient
 from ..models.session import Session
 from ..models.score import Score
-from ..auth.deps import get_current_user
+from ..auth.deps import get_current_user, verify_patient_access
 from ..schemas.session import SessionCreate, SessionLabelIn, SessionOut
 from ..ml.features import extract_features
 from ..ml.games import axis_for_game, secondary_axes_for_game
+from ..ml.validity import mark_validity
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 def _secondary_features(series, game_type: str):
-    """Признаки по вторичным осям игры (multi-axis). None, если их нет или ряд пуст."""
+    """Признаки по вторичным осям игры (multi-axis). None, если их нет или ряд пуст.
+
+    mark_validity снимает `valid` у осей без реального движения (напр. пациент почти не
+    пользовался газом/тормозом → pitch ROM≈0): такая ось не попадёт в baseline и вердикт.
+    """
     axes = secondary_axes_for_game(game_type)
     if not series or not axes:
         return None
-    return {axis: extract_features(series, axis) for axis in axes}
+    return {axis: mark_validity(extract_features(series, axis)) for axis in axes}
 
 
 def _out(s: Session) -> SessionOut:
@@ -42,6 +47,8 @@ def _out(s: Session) -> SessionOut:
 @router.post("", response_model=SessionOut, status_code=201)
 async def create_session(body: SessionCreate, user: User = Depends(get_current_user)):
     if body.patient_id:
+        # IDOR-гард: создавать сессию можно только своему пациенту (врач — своему, пациент — себе).
+        await verify_patient_access(body.patient_id, user)
         patient_id = PydanticObjectId(body.patient_id)
     elif user.role == "patient":
         patient = await Patient.find_one(Patient.user_id == user.id)
@@ -52,7 +59,9 @@ async def create_session(body: SessionCreate, user: User = Depends(get_current_u
         raise HTTPException(400, "Укажите patient_id")
 
     axis = axis_for_game(body.game_type)
-    features = extract_features(body.imu_time_series, axis) if body.imu_time_series else None
+    # mark_validity снимает features.valid у «пустых прогонов» (машина/платформа разбилась
+    # без управления → ROM≈0): сырой ряд сохраняем, но из аналитики такую сессию исключаем.
+    features = mark_validity(extract_features(body.imu_time_series, axis)) if body.imu_time_series else None
     axis_features = _secondary_features(body.imu_time_series, body.game_type)
 
     session = Session(
@@ -87,6 +96,7 @@ async def list_sessions(
 ):
     query = {}
     if patient_id:
+        await verify_patient_access(patient_id, user)   # IDOR-гард: только свой пациент
         query["patient_id"] = PydanticObjectId(patient_id)
     elif user.role == "patient":
         patient = await Patient.find_one(Patient.user_id == user.id)
@@ -110,6 +120,7 @@ async def get_session(sid: str, user: User = Depends(get_current_user)):
     s = await Session.get(PydanticObjectId(sid))
     if not s:
         raise HTTPException(404, "Сессия не найдена")
+    await verify_patient_access(s.patient_id, user)   # IDOR-гард: сессия чужого пациента недоступна
     return _out(s)
 
 
@@ -118,6 +129,7 @@ async def label_session(sid: str, body: SessionLabelIn, user: User = Depends(get
     s = await Session.get(PydanticObjectId(sid))
     if not s:
         raise HTTPException(404, "Сессия не найдена")
+    await verify_patient_access(s.patient_id, user)   # IDOR-гард: метку ставит только владелец
 
     label = dict(s.label or {})
     label["labeled_at"] = datetime.now(timezone.utc).isoformat()

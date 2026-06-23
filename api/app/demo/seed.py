@@ -4,10 +4,14 @@
 Идемпотентно: если демо-врач уже существует — выходим, повторно ничего не создаём.
 Создаёт:
   - демо-врача и демо-пациента (учётки для входа);
-  - 5 пациентов с клинически правдоподобными траекториями реабилитации
-    (норма/прогресс, постинсультная асимметрия, тремор Паркинсона, болевой синдром);
+  - 5 детей с ДЦП и клинически правдоподобными траекториями реабилитации
+    (лёгкая спастическая форма с прогрессом, спастический гемипарез/асимметрия,
+     дискинетическая форма с гиперкинезами, атаксическая форма с обострением);
   - по 11–14 сессий на пациента с готовыми признаками — чтобы ML-дашборд (KPI, аномалии,
     рекомендации, тренды, спектр дрожи) был полностью заполнен сразу после входа.
+
+Целевая аудитория проекта — дети с ДЦП (детский церебральный паралич): тренировка крупной
+моторики руки (амплитуда, плавность, гиперкинезы/тремор) в игровой форме.
 
 Генератор IMU здесь автономный (мини-копия ml-service/data/synthetic.py): демо-модуль
 не должен зависеть от ml-service, а паритет признаков ему не нужен.
@@ -66,13 +70,18 @@ def _lerp(a: float, b: float, p: float) -> float:
 
 
 def _params_for(profile: str, p: float, last: bool) -> Dict:
-    """Параметры сессии по профилю и прогрессу p∈[0,1] (0 — старая, 1 — свежая)."""
-    if profile == "recovery_normal":          # норма с улучшением
+    """Параметры сессии по профилю ДЦП и прогрессу p∈[0,1] (0 — старая, 1 — свежая).
+
+    Профили соответствуют клиническим формам ДЦП. Числа (ROM/плавность/тремор/асимметрия)
+    клинически правдоподобны и дают на дашборде врача разные ML-вердикты (норма / внимание /
+    критично), чтобы демо показывало весь спектр аналитики.
+    """
+    if profile == "dcp_mild_progress":        # лёгкая спастическая диплегия, хорошая динамика
         return dict(rom=_lerp(38, 60, p), smooth=_lerp(0.78, 0.95, p), tremor=0.05,
                     tremor_freq_hz=6.0, asymmetry=_lerp(0.18, 0.08, p),
                     pause_frac=_lerp(0.22, 0.10, p), dur_sec=_lerp(18, 26, p),
                     fatigue_decay=0.1, noise_sd=0.5)
-    if profile == "stroke_asym":              # постинсультная асимметрия, неполное восстановление
+    if profile == "dcp_spastic_hemi":         # спастический гемипарез: стойкая асимметрия, плато
         params = dict(rom=_lerp(26, 33, p), smooth=_lerp(0.55, 0.70, p), tremor=0.15,
                       tremor_freq_hz=5.5, asymmetry=_lerp(0.55, 0.40, p),
                       pause_frac=_lerp(0.38, 0.30, p), dur_sec=_lerp(16, 22, p),
@@ -81,15 +90,15 @@ def _params_for(profile: str, p: float, last: bool) -> Dict:
             params.update(rom=31, smooth=0.64, tremor=0.16, asymmetry=0.28, pause_frac=0.28,
                           fatigue_decay=0.25, dur_sec=20, noise_sd=0.7)
         return params
-    if profile == "parkinson_tremor":         # тремор покоя ~5 Гц, хронический
+    if profile == "dcp_dyskinetic":           # дискинетическая форма: гиперкинезы ~4 Гц, хроническая
         return dict(rom=_lerp(30, 38, p), smooth=_lerp(0.45, 0.56, p),
-                    tremor=_lerp(0.72, 0.62, p), tremor_freq_hz=5.0, asymmetry=0.2,
+                    tremor=_lerp(0.72, 0.62, p), tremor_freq_hz=4.0, asymmetry=0.2,
                     pause_frac=0.2, dur_sec=_lerp(18, 22, p), fatigue_decay=0.15, noise_sd=1.0)
-    if profile == "shoulder_pain":            # болевой синдром, недавнее обострение
+    if profile == "dcp_ataxic":               # атаксическая форма: нарушение координации + обострение
         params = dict(rom=_lerp(22, 27, p), smooth=_lerp(0.50, 0.60, p), tremor=0.12,
-                      tremor_freq_hz=5.0, asymmetry=0.45, pause_frac=_lerp(0.45, 0.32, p),
+                      tremor_freq_hz=3.5, asymmetry=0.45, pause_frac=_lerp(0.45, 0.32, p),
                       dur_sec=_lerp(14, 20, p), fatigue_decay=0.4, noise_sd=0.8)
-        if last:  # самая свежая сессия — обострение → критическая ML-аномалия
+        if last:  # самая свежая сессия — обострение/утомление → критическая ML-аномалия
             params.update(rom=12, smooth=0.40, pause_frac=0.58, fatigue_decay=0.6, dur_sec=12)
         return params
     raise ValueError(f"неизвестный профиль: {profile}")
@@ -98,21 +107,21 @@ def _params_for(profile: str, p: float, last: bool) -> Dict:
 # ─── Когорта демо-пациентов ──────────────────────────────────────────────────
 # account=True → пациент привязан к учётке demo_patient (может войти и поиграть сам).
 DEMO_PATIENTS = [
-    {"full_name": "Мария Иванова",  "age": 48, "gender": "ж",
-     "diagnosis": "Состояние после эндопротезирования коленного сустава",
-     "profile": "recovery_normal", "n": 12, "account": True},
-    {"full_name": "Анна Ковалёва",  "age": 54, "gender": "ж",
-     "diagnosis": "Постинсультный правосторонний гемипарез",
-     "profile": "stroke_asym", "n": 14},
-    {"full_name": "Борис Семёнов",  "age": 67, "gender": "м",
-     "diagnosis": "Болезнь Паркинсона, тремор покоя",
-     "profile": "parkinson_tremor", "n": 13},
-    {"full_name": "Дмитрий Орлов",  "age": 60, "gender": "м",
-     "diagnosis": "Хронический болевой синдром плечевого сустава",
-     "profile": "shoulder_pain", "n": 11},
-    {"full_name": "Елена Дёмина",   "age": 51, "gender": "ж",
-     "diagnosis": "Реабилитация лучезапястного сустава после перелома",
-     "profile": "recovery_normal", "n": 12},
+    {"full_name": "Алмас Сериков",  "age": 8, "gender": "м",
+     "diagnosis": "ДЦП, спастическая диплегия, лёгкая форма",
+     "profile": "dcp_mild_progress", "n": 12, "account": True},
+    {"full_name": "Дария Нурлан",   "age": 7, "gender": "ж",
+     "diagnosis": "ДЦП, спастический правосторонний гемипарез",
+     "profile": "dcp_spastic_hemi", "n": 14},
+    {"full_name": "Тимур Ахметов",  "age": 9, "gender": "м",
+     "diagnosis": "ДЦП, дискинетическая (гиперкинетическая) форма",
+     "profile": "dcp_dyskinetic", "n": 13},
+    {"full_name": "Аружан Касым",   "age": 6, "gender": "ж",
+     "diagnosis": "ДЦП, атаксическая форма",
+     "profile": "dcp_ataxic", "n": 11},
+    {"full_name": "Санжар Болат",   "age": 10, "gender": "м",
+     "diagnosis": "ДЦП, спастическая диплегия",
+     "profile": "dcp_mild_progress", "n": 12},
 ]
 
 

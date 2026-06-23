@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/index.js';
 import AnomalyBadge from '../components/AnomalyBadge';
 import SessionChart from '../components/SessionChart';
+import Disclaimer from '../components/Disclaimer';
 import {
   NORMS, styleFor, statusOf, fmtMetric, avg, STATUS_STYLE, modeLabel, isMeasured, measuredValue,
 } from '../lib/clinical';
@@ -130,9 +131,12 @@ export default function PatientDetail() {
   const [tab, setTab] = useState(0);
   const [gameType, setGameType] = useState('game1');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     setLoading(true);
+    setError(false);
     Promise.all([
       api.getPatient(id),
       api.getSessions({ patient_id: id, game_type: gameType, limit: 30 }),
@@ -141,11 +145,26 @@ export default function PatientDetail() {
       setPatient(p);
       setSessions(s);
       setInsights(ins);
-    }).catch(() => navigate('/doctor/patients'))
+    }).catch(() => setError(true))  // транзиентная ошибка не выбрасывает врача со страницы
       .finally(() => setLoading(false));
-  }, [id, gameType]);
+  }, [id, gameType, reloadKey]);
 
   if (loading) return <div className="flex items-center justify-center h-full text-slate-400">Загрузка...</div>;
+  if (error) return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-6">
+      <AlertTriangleIcon size={32} className="text-amber-500" />
+      <div>
+        <p className="text-slate-700 font-medium">Не удалось загрузить данные пациента</p>
+        <p className="text-sm text-slate-400 mt-1">Проверьте соединение и попробуйте ещё раз.</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate('/doctor/patients')} className="btn-secondary text-sm">
+          <ArrowLeftIcon size={15} /> К пациентам
+        </button>
+        <button onClick={() => setReloadKey((k) => k + 1)} className="btn-primary text-sm">Повторить</button>
+      </div>
+    </div>
+  );
   if (!patient) return null;
 
   const f = insights?.features;
@@ -235,6 +254,8 @@ export default function PatientDetail() {
         ))}
       </div>
 
+      {hasData && <Disclaimer className="mb-5" />}
+
       {!hasData && (
         <Section>
           <div className="text-center py-10 text-slate-400">
@@ -287,7 +308,10 @@ export default function PatientDetail() {
                       {anomaly.flags.map((fl, i) => (
                         <li key={i} className="flex items-center gap-2 text-sm">
                           <span className={`w-1.5 h-1.5 rounded-full ${fl.severity === 'critical' ? 'bg-red-500' : 'bg-amber-500'}`} />
-                          <span className="text-slate-700">{fl.label}:</span>
+                          <span className="text-slate-700">
+                            {fl.axisLabel && <span className="text-slate-400 font-normal">[{fl.axisLabel}] </span>}
+                            {fl.label}:
+                          </span>
                           <span className="tabular-nums text-slate-500">
                             {fl.current} vs норма {fl.baseline} <span className="text-slate-400">({fl.z}σ)</span>
                           </span>
@@ -327,11 +351,17 @@ export default function PatientDetail() {
             )}
           </Section>
 
-          {/* Вторичная ось управления (multi-axis: напр. газ/тормоз в City Driver) */}
+          {/* Вторичная ось управления (multi-axis: напр. газ/тормоз в City Driver).
+              Теперь анализируется и входит в общий вердикт — показываем её собственный статус. */}
           {axisFeatures && Object.entries(axisFeatures).map(([axis, data]) => (
             data.features && data.features.valid && (
               <Section key={axis} title="Вторая ось управления"
-                aside={<span className="text-xs text-slate-400">{data.label} · не входит в оценку аномалий</span>}>
+                aside={
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">{data.label}</span>
+                    {data.anomaly && <AnomalyBadge anomaly={data.anomaly} showMode={false} />}
+                  </div>
+                }>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   {AXIS_KPI_KEYS.map((k) => (
                     <MetricCard key={k} metricKey={k} value={measuredValue(k, data.features)}

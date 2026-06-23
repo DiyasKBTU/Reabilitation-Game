@@ -17,6 +17,8 @@ def _user_out(user: User) -> UserOut:
 
 @router.post("/register", response_model=TokenOut, status_code=201)
 async def register(body: RegisterIn):
+    if not body.consent:
+        raise HTTPException(400, "Требуется согласие на обработку персональных данных")
     if await User.find_one(User.username == body.username):
         raise HTTPException(400, "Имя пользователя занято")
     if await User.find_one(User.email == body.email):
@@ -27,6 +29,7 @@ async def register(body: RegisterIn):
         email=body.email,
         password_hash=hash_password(body.password),
         role=body.role,
+        consent=body.consent,
     )
     await user.insert()
 

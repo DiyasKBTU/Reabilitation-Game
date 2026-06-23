@@ -19,7 +19,7 @@ export default function Leaderboard() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Рейтинг</h1>
         <div className="flex gap-2">
-          {[['game1', '🚀 Space Catcher'], ['game2', '🏙️ City Driver']].map(([g, label]) => (
+          {[['game1', 'Space Catcher'], ['game2', 'City Driver']].map(([g, label]) => (
             <button
               key={g}
               onClick={() => setGameType(g)}
