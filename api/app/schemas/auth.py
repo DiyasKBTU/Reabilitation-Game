@@ -3,10 +3,10 @@ from typing import Literal, Optional
 
 
 class RegisterIn(BaseModel):
+    # Публичная регистрация — только пациент, поэтому роль не принимается (см. routes/auth.py).
     username: str
     email: EmailStr
     password: str
-    role: Literal["patient", "doctor", "admin"] = "patient"
     consent: bool = False   # согласие на обработку персональных данных (обязательно при регистрации)
 
 

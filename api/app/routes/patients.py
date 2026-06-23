@@ -48,6 +48,19 @@ async def create_patient(body: PatientCreate, user: User = Depends(require_docto
     return _out(patient)
 
 
+# ВАЖНО: маршрут /unattached объявлен ДО /{pid}, иначе "unattached" попадёт в {pid}.
+@router.get("/unattached", response_model=List[PatientOut])
+async def list_unattached(user: User = Depends(require_doctor)):
+    """Самостоятельно зарегистрированные пациенты без врача — кандидаты на прикрепление.
+
+    Пациент при регистрации создаётся с doctor_id=None; врач прикрепляет его к себе сам.
+    """
+    patients = await Patient.find(
+        {"doctor_id": None, "user_id": {"$ne": None}}
+    ).to_list()
+    return [_out(p) for p in patients]
+
+
 @router.get("/{pid}", response_model=PatientOut)
 async def get_patient(pid: str, user: User = Depends(get_current_user)):
     # IDOR-гард: пациент — только своя карточка, врач — только свои пациенты, admin — все.
@@ -62,4 +75,18 @@ async def update_patient(pid: str, body: PatientUpdate, user: User = Depends(req
     update_data = body.model_dump(exclude_none=True)
     if update_data:
         await p.set(update_data)
+    return _out(p)
+
+
+@router.post("/{pid}/attach", response_model=PatientOut)
+async def attach_patient(pid: str, user: User = Depends(require_doctor)):
+    """Врач прикрепляет неприкреплённого пациента к себе. Пациент сам этого сделать не может
+    (эндпоинт под require_doctor). Нельзя «увести» пациента у другого врача (только admin)."""
+    p = await Patient.get(PydanticObjectId(pid))
+    if not p:
+        raise HTTPException(404, "Пациент не найден")
+    if p.doctor_id is not None and p.doctor_id != user.id and user.role != "admin":
+        raise HTTPException(409, "Пациент уже прикреплён к другому врачу")
+    await p.set({"doctor_id": user.id})
+    p.doctor_id = user.id
     return _out(p)

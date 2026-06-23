@@ -4,7 +4,8 @@ import { api } from '../api/index.js';
 import useAuthStore from '../stores/authStore';
 
 export default function Register() {
-  const [form, setForm] = useState({ username: '', email: '', password: '', role: 'patient', consent: false });
+  // Публичная регистрация — только пациент. Роль не выбирается (врача добавляет администратор).
+  const [form, setForm] = useState({ username: '', email: '', password: '', consent: false });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuthStore();
@@ -44,14 +45,10 @@ export default function Register() {
           <input type="password" className="input" value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })} required />
         </div>
-        <div>
-          <label className="label">Роль</label>
-          <select className="input" value={form.role}
-            onChange={(e) => setForm({ ...form, role: e.target.value })}>
-            <option value="patient">Пациент</option>
-            <option value="doctor">Врач</option>
-          </select>
-        </div>
+        <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+          Регистрируется пациент. Доступ врача выдаёт администратор; врач сам прикрепит вас
+          к себе в системе.
+        </p>
         <label className="flex items-start gap-2 text-sm text-slate-600 cursor-pointer">
           <input type="checkbox" className="mt-0.5 shrink-0" checked={form.consent}
             onChange={(e) => setForm({ ...form, consent: e.target.checked })} required />

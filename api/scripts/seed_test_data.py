@@ -1,21 +1,24 @@
 """
 CLI: засев ТЕСТОВЫХ данных (дети с ДЦП) в MongoDB для разработки и тестирования.
 
-Отличается от демо-режима (`DEMO_MODE` + `app/demo/seed.py`):
-  - запускается ВРУЧНУЮ, а не автоматически на старте API;
-  - помечает всё `source="test"` — легко найти и удалить (`--reset`), не путая с боевыми/демо;
-  - отдельные учётки `test_doctor` / `test_patient` (пароль `test1234`).
+Создаёт связную структуру с удобными учётками:
+  - 1 администратор;
+  - 3 врача, у каждого 3–4 прикреплённых пациента-ребёнка с ДЦП и сессиями;
+  - у одного пациента каждого врача есть собственная учётка для входа (играть самому).
 
-Назначение — быстро наполнить пустую БД реалистичными данными, чтобы вручную проверять
-дашборд врача, экран результата пациента, фильтры, тренды, ML-вердикты без реального устройства.
+Отличие от демо-режима (`DEMO_MODE` + `app/demo/seed.py`):
+  - запускается ВРУЧНУЮ, а не на старте API;
+  - всё помечено `source="test"` — легко удалить (`--reset`);
+  - предсказуемые логины/пароли (печатаются в конце).
 
-Целевая аудитория проекта — дети с ДЦП. Когорта покрывает основные формы (спастическая,
-гемипарез, дискинетическая, атаксическая) и весь спектр ML-вердиктов (норма / внимание / критично).
+Логика ролей (важно): публично регистрируется ТОЛЬКО пациент и БЕЗ выбора врача — пациент не
+может сам прикрепиться к врачу. Врач прикрепляет пациента к себе сам. Поэтому врачи и админ
+заводятся этим скриптом (или администратором), а не публичной регистрацией.
 
 Запуск (из корня репозитория, venv), требует запущенной MongoDB (MONGO_URI из api/.env):
-  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py            # засеять (идемпотентно)
-  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py --reset    # удалить тест-данные и засеять заново
-  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py --doctor-id <ObjectId>   # привязать к врачу
+  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py                 # засеять (идемпотентно)
+  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py --reset         # пересоздать тест-данные
+  venv\\Scripts\\python.exe api\\scripts\\seed_test_data.py --clear-demo    # ещё и стереть демо-данные
 """
 from __future__ import annotations
 import argparse
@@ -36,30 +39,64 @@ from app.demo.seed import _make_series, _params_for  # noqa: E402
 from app.ml.features import extract_features          # noqa: E402
 from app.ml.validity import mark_validity             # noqa: E402
 
-TEST_PASSWORD = "test1234"
-TEST_DOCTOR_USERNAME = "test_doctor"
-TEST_PATIENT_USERNAME = "test_patient"
+# ─── Удобные учётные данные (печатаются в конце) ─────────────────────────────
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin1234"
+DOCTOR_PASSWORD = "doctor1234"
+PATIENT_PASSWORD = "patient1234"
 
-# Тест-когорта: дети с ДЦП. account=True → привязан к учётке test_patient (может войти и поиграть).
-TEST_COHORT = [
-    {"full_name": "Айдос Жума (тест)",  "age": 8,  "gender": "м",
-     "diagnosis": "ДЦП, спастическая диплегия, лёгкая форма",
-     "profile": "dcp_mild_progress", "n": 12, "account": True},
-    {"full_name": "Камила Ерлан (тест)", "age": 7, "gender": "ж",
-     "diagnosis": "ДЦП, спастический левосторонний гемипарез",
-     "profile": "dcp_spastic_hemi", "n": 13},
-    {"full_name": "Ерлан Серик (тест)",  "age": 9, "gender": "м",
-     "diagnosis": "ДЦП, дискинетическая (гиперкинетическая) форма",
-     "profile": "dcp_dyskinetic", "n": 12},
-    {"full_name": "Сабина Нур (тест)",   "age": 6, "gender": "ж",
-     "diagnosis": "ДЦП, атаксическая форма",
-     "profile": "dcp_ataxic", "n": 11},
-    {"full_name": "Нурлан Касым (тест)", "age": 11, "gender": "м",
-     "diagnosis": "ДЦП, спастический правосторонний гемипарез",
-     "profile": "dcp_spastic_hemi", "n": 14},
-    {"full_name": "Аделя Болат (тест)",  "age": 5, "gender": "ж",
-     "diagnosis": "ДЦП, спастическая диплегия",
-     "profile": "dcp_mild_progress", "n": 12},
+# Врачи и их пациенты. account="patientN" → у пациента есть учётка для входа (играть самому);
+# остальные пациенты — карточки без учётки (врач просто наблюдает). Формы ДЦП дают на дашборде
+# разные ML-вердикты (норма / внимание / критично).
+DOCTORS = [
+    {
+        "username": "doctor1", "full_name": "Жанна Абаева",
+        "patients": [
+            {"full_name": "Алмас Сериков", "age": 8, "gender": "м",
+             "diagnosis": "ДЦП, спастическая диплегия, лёгкая форма",
+             "profile": "dcp_mild_progress", "n": 12, "account": "patient1"},
+            {"full_name": "Дария Нурлан", "age": 7, "gender": "ж",
+             "diagnosis": "ДЦП, спастический правосторонний гемипарез",
+             "profile": "dcp_spastic_hemi", "n": 13},
+            {"full_name": "Тимур Ахметов", "age": 9, "gender": "м",
+             "diagnosis": "ДЦП, дискинетическая (гиперкинетическая) форма",
+             "profile": "dcp_dyskinetic", "n": 12},
+            {"full_name": "Аружан Касым", "age": 6, "gender": "ж",
+             "diagnosis": "ДЦП, атаксическая форма",
+             "profile": "dcp_ataxic", "n": 11},
+        ],
+    },
+    {
+        "username": "doctor2", "full_name": "Марат Сейтов",
+        "patients": [
+            {"full_name": "Санжар Болат", "age": 10, "gender": "м",
+             "diagnosis": "ДЦП, спастическая диплегия",
+             "profile": "dcp_mild_progress", "n": 12, "account": "patient2"},
+            {"full_name": "Камила Ерлан", "age": 7, "gender": "ж",
+             "diagnosis": "ДЦП, спастический левосторонний гемипарез",
+             "profile": "dcp_spastic_hemi", "n": 14},
+            {"full_name": "Ерлан Серик", "age": 9, "gender": "м",
+             "diagnosis": "ДЦП, дискинетическая (гиперкинетическая) форма",
+             "profile": "dcp_dyskinetic", "n": 12},
+        ],
+    },
+    {
+        "username": "doctor3", "full_name": "Айгуль Бекова",
+        "patients": [
+            {"full_name": "Нурлан Касым", "age": 11, "gender": "м",
+             "diagnosis": "ДЦП, спастическая диплегия, лёгкая форма",
+             "profile": "dcp_mild_progress", "n": 12, "account": "patient3"},
+            {"full_name": "Сабина Нур", "age": 6, "gender": "ж",
+             "diagnosis": "ДЦП, атаксическая форма",
+             "profile": "dcp_ataxic", "n": 11},
+            {"full_name": "Дамир Аман", "age": 8, "gender": "м",
+             "diagnosis": "ДЦП, спастический правосторонний гемипарез",
+             "profile": "dcp_spastic_hemi", "n": 13},
+            {"full_name": "Аделя Болат", "age": 5, "gender": "ж",
+             "diagnosis": "ДЦП, дискинетическая (гиперкинетическая) форма",
+             "profile": "dcp_dyskinetic", "n": 12},
+        ],
+    },
 ]
 
 
@@ -107,90 +144,141 @@ async def _seed_sessions(patient, doctor_id, spec, seed: int) -> int:
     return created_count
 
 
-async def _reset_test_data() -> None:
-    """Удаляет всё, помеченное source='test', и тест-учётки — чистый повторный засев."""
-    from app.models.user import User
+async def _delete_by_source(source: str) -> int:
+    """Удаляет пациентов с данным source и их сессии/очки. Возвращает число пациентов."""
     from app.models.patient import Patient
     from app.models.session import Session
     from app.models.score import Score
 
-    test_patients = await Patient.find(Patient.source == "test").to_list()
-    pids = [p.id for p in test_patients]
-    for pid in pids:
-        await Session.find(Session.patient_id == pid).delete()
-        await Score.find(Score.patient_id == pid).delete()
-    await Patient.find(Patient.source == "test").delete()
-    for uname in (TEST_DOCTOR_USERNAME, TEST_PATIENT_USERNAME):
+    patients = await Patient.find(Patient.source == source).to_list()
+    for p in patients:
+        await Session.find(Session.patient_id == p.id).delete()
+        await Score.find(Score.patient_id == p.id).delete()
+    await Patient.find(Patient.source == source).delete()
+    return len(patients)
+
+
+async def _reset_test_data() -> None:
+    """Удаляет тест-пациентов (source='test') и тест-учётки (врачи/пациенты), кроме админа."""
+    from app.models.user import User
+
+    n = await _delete_by_source("test")
+    usernames = ([d["username"] for d in DOCTORS]
+                 + [pt["account"] for d in DOCTORS for pt in d["patients"] if pt.get("account")])
+    for uname in usernames:
         u = await User.find_one(User.username == uname)
         if u:
             await u.delete()
-    print(f"  Удалено тест-пациентов: {len(pids)} (с их сессиями и очками).")
+    print(f"  Сброшено тест-данных: пациентов {n}, учёток {len(usernames)} (админ сохранён).")
 
 
-async def seed(reset: bool, doctor_id: str | None) -> None:
+async def _clear_demo_data() -> None:
+    """Удаляет демо-данные (source='demo') и демо-учётки. Для перехода на DEMO_MODE=false начисто."""
+    from app.models.user import User
+
+    n = await _delete_by_source("demo")
+    removed = 0
+    for uname in ("demo_doctor", "demo_patient"):
+        u = await User.find_one(User.username == uname)
+        if u:
+            await u.delete()
+            removed += 1
+    print(f"  Очищены демо-данные: пациентов {n}, демо-учёток {removed}.")
+
+
+async def _ensure_admin() -> None:
+    """Гарантирует учётку администратора с известным паролем (admin / admin1234)."""
+    from app.models.user import User
+    from app.auth.password import hash_password
+
+    admin = await User.find_one(User.username == ADMIN_USERNAME)
+    if admin:
+        await admin.set({"password_hash": hash_password(ADMIN_PASSWORD), "role": "admin"})
+        print(f"Админ обновлён: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
+    else:
+        await User(username=ADMIN_USERNAME, email="admin@rehab.test",
+                   password_hash=hash_password(ADMIN_PASSWORD), role="admin",
+                   consent=True).insert()
+        print(f"Создан админ: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
+
+
+async def seed(reset: bool, clear_demo: bool) -> None:
     from app.database import connect_db, close_db
     from app.models.user import User
     from app.models.patient import Patient
     from app.auth.password import hash_password
-    from beanie import PydanticObjectId
 
     await connect_db()
     try:
+        if clear_demo:
+            print("Очистка демо-данных...")
+            await _clear_demo_data()
         if reset:
-            print("Сброс существующих тест-данных...")
+            print("Сброс прежних тест-данных...")
             await _reset_test_data()
 
-        if await User.find_one(User.username == TEST_DOCTOR_USERNAME):
-            print("Тест-данные уже засеяны (есть test_doctor). Для пересоздания: --reset.")
+        await _ensure_admin()
+
+        if await User.find_one(User.username == DOCTORS[0]["username"]):
+            print("Тест-данные уже засеяны (есть doctor1). Для пересоздания: --reset.")
             return
 
-        # Врач: либо указанный --doctor-id, либо отдельная тест-учётка.
-        if doctor_id:
-            did = PydanticObjectId(doctor_id)
-            if not await User.get(did):
-                print(f"Врач с id={doctor_id} не найден.")
-                return
-            doctor_user_id = did
-            print(f"Пациенты будут привязаны к врачу id={doctor_id}.")
-        else:
-            doctor = User(username=TEST_DOCTOR_USERNAME, email="test_doctor@rehab.test",
-                          password_hash=hash_password(TEST_PASSWORD), role="doctor")
+        total_patients = total_sessions = 0
+        seed_n = 5000
+        for d in DOCTORS:
+            doctor = User(username=d["username"], email=f'{d["username"]}@rehab.test',
+                          password_hash=hash_password(DOCTOR_PASSWORD), role="doctor",
+                          consent=True)
             await doctor.insert()
-            doctor_user_id = doctor.id
-            print(f"Создан тест-врач: {TEST_DOCTOR_USERNAME} / {TEST_PASSWORD}")
+            print(f"\nВрач {d['username']} ({d['full_name']}) / {DOCTOR_PASSWORD}:")
 
-        patient_user = User(username=TEST_PATIENT_USERNAME, email="test_patient@rehab.test",
-                            password_hash=hash_password(TEST_PASSWORD), role="patient")
-        await patient_user.insert()
-        print(f"Создан тест-пациент (учётка): {TEST_PATIENT_USERNAME} / {TEST_PASSWORD}")
+            for spec in d["patients"]:
+                user_id = None
+                if spec.get("account"):
+                    pu = User(username=spec["account"], email=f'{spec["account"]}@rehab.test',
+                              password_hash=hash_password(PATIENT_PASSWORD), role="patient",
+                              consent=True)
+                    await pu.insert()
+                    user_id = pu.id
 
-        total_sessions = 0
-        for idx, spec in enumerate(TEST_COHORT):
-            patient = Patient(
-                full_name=spec["full_name"], doctor_id=doctor_user_id,
-                user_id=patient_user.id if spec.get("account") else None,
-                diagnosis=spec["diagnosis"], age=spec["age"], gender=spec["gender"],
-                source="test",
-            )
-            await patient.insert()
-            cnt = await _seed_sessions(patient, doctor_user_id, spec, seed=5000 + idx * 211)
-            total_sessions += cnt
-            print(f"  + {spec['full_name']}: {cnt} сессий ({spec['diagnosis']})")
+                patient = Patient(
+                    full_name=spec["full_name"], doctor_id=doctor.id, user_id=user_id,
+                    diagnosis=spec["diagnosis"], age=spec["age"], gender=spec["gender"],
+                    source="test",
+                )
+                await patient.insert()
+                cnt = await _seed_sessions(patient, doctor.id, spec, seed=seed_n)
+                seed_n += 211
+                total_patients += 1
+                total_sessions += cnt
+                acc = f' [вход: {spec["account"]} / {PATIENT_PASSWORD}]' if spec.get("account") else ""
+                print(f"  + {spec['full_name']}: {cnt} сессий{acc}")
 
-        print(f"\nГотово: {len(TEST_COHORT)} пациентов, {total_sessions} сессий.")
-        print("Вход врача:   test_doctor / test1234  → дашборд со всеми пациентами.")
-        print("Вход ребёнка: test_patient / test1234 → игры и экран результата.")
+        print(f"\nГотово: {len(DOCTORS)} врача, {total_patients} пациентов, {total_sessions} сессий.")
+        _print_credentials()
     finally:
         await close_db()
+
+
+def _print_credentials() -> None:
+    print("\n── Учётные данные ──────────────────────────────")
+    print(f"  Админ    {ADMIN_USERNAME:<10} {ADMIN_PASSWORD}")
+    for d in DOCTORS:
+        print(f"  Врач     {d['username']:<10} {DOCTOR_PASSWORD}")
+    for d in DOCTORS:
+        for pt in d["patients"]:
+            if pt.get("account"):
+                print(f"  Пациент  {pt['account']:<10} {PATIENT_PASSWORD}  (врач {d['username']})")
+    print("────────────────────────────────────────────────")
 
 
 def main() -> None:
     _ensure_utf8_stdout()
     ap = argparse.ArgumentParser(description="Засев тестовых данных (дети с ДЦП) в MongoDB.")
     ap.add_argument("--reset", action="store_true", help="Удалить прежние тест-данные и засеять заново.")
-    ap.add_argument("--doctor-id", help="Привязать пациентов к существующему врачу (его ObjectId).")
+    ap.add_argument("--clear-demo", action="store_true", help="Также стереть демо-данные (source='demo').")
     args = ap.parse_args()
-    asyncio.run(seed(reset=args.reset, doctor_id=args.doctor_id))
+    asyncio.run(seed(reset=args.reset, clear_demo=args.clear_demo))
 
 
 if __name__ == "__main__":

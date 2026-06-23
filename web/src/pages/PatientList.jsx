@@ -79,11 +79,13 @@ function NewPatientModal({ onClose, onCreated }) {
 
 export default function PatientList() {
   const [patients, setPatients] = useState([]);
+  const [unattached, setUnattached] = useState([]);   // самостоятельно зарегистрированные, без врача
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [showModal, setShowModal] = useState(false);
+  const [attaching, setAttaching] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -93,7 +95,23 @@ export default function PatientList() {
       .then(setPatients)
       .catch(() => setError(true))  // ошибка сети не маскируется под пустой список
       .finally(() => setLoading(false));
+    // Неприкреплённые пациенты — отдельно; их отсутствие/ошибка не ломает основной список.
+    api.getUnattachedPatients().then(setUnattached).catch(() => setUnattached([]));
   }, [reloadKey]);
+
+  async function handleAttach(p) {
+    setAttaching(p.id);
+    try {
+      const attached = await api.attachPatient(p.id);
+      setUnattached((prev) => prev.filter((x) => x.id !== p.id));
+      setPatients((prev) => [attached, ...prev]);
+    } catch (_) {
+      // прикрепление не удалось (напр. пациента уже забрал другой врач) — обновим списки
+      setReloadKey((k) => k + 1);
+    } finally {
+      setAttaching('');
+    }
+  }
 
   const filtered = patients.filter((p) =>
     p.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -128,6 +146,31 @@ export default function PatientList() {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+
+      {/* Неприкреплённые пациенты — самостоятельно зарегистрировались, ждут прикрепления к врачу. */}
+      {unattached.length > 0 && (
+        <div className="card p-4 mb-4 border-blue-200 bg-blue-50/40">
+          <div className="flex items-center gap-2 mb-3">
+            <UsersIcon size={16} className="text-blue-500" />
+            <h3 className="font-semibold text-slate-800">Неприкреплённые пациенты</h3>
+            <span className="text-xs text-slate-500">зарегистрировались сами — прикрепите к себе</span>
+          </div>
+          <div className="space-y-2">
+            {unattached.map((p) => (
+              <div key={p.id} className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-3 py-2">
+                <div className="text-sm">
+                  <span className="font-medium text-slate-800">{p.full_name}</span>
+                  {p.diagnosis && <span className="text-slate-400"> · {p.diagnosis}</span>}
+                </div>
+                <button onClick={() => handleAttach(p)} disabled={attaching === p.id}
+                  className="btn-primary text-sm py-1.5">
+                  {attaching === p.id ? 'Прикрепление…' : 'Прикрепить'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-slate-400 text-center py-12">Загрузка...</div>

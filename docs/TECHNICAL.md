@@ -103,7 +103,7 @@ rehabgame/
 ### Auth
 | Метод | Путь | Тело | Ответ | Роль |
 |-------|------|------|-------|------|
-| POST | `/auth/register` | `{username, email, password, role}` | `{access_token, user}` | — |
+| POST | `/auth/register` | `{username, email, password, consent}` | `{access_token, user}` | — (только пациент; роль не выбирается) |
 | POST | `/auth/login` | `{username, password}` | `{access_token, user}` | — |
 | GET | `/auth/me` | — | `{id, username, email, role}` | любая |
 
@@ -112,8 +112,10 @@ rehabgame/
 |-------|------|----------|------|
 | GET | `/patients` | Список: doctor→свои, admin→все, patient→себя | любая |
 | POST | `/patients` | Создать пациента | doctor/admin |
+| GET | `/patients/unattached` | Самозарегистрированные пациенты без врача (кандидаты на прикрепление) | doctor/admin |
 | GET | `/patients/{id}` | Карточка пациента | любая |
 | PATCH | `/patients/{id}` | Обновить данные | doctor/admin |
+| POST | `/patients/{id}/attach` | Прикрепить неприкреплённого пациента к себе (пациент сам — не может) | doctor/admin |
 
 ### Sessions
 | Метод | Путь | Описание | Роль |

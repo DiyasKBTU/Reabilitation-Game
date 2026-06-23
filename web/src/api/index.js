@@ -32,6 +32,9 @@ export const api = {
   getPatient: (id) => apiFetch(`/patients/${id}`),
   createPatient: (data) => apiFetch('/patients', { method: 'POST', body: JSON.stringify(data) }),
   updatePatient: (id, data) => apiFetch(`/patients/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // Неприкреплённые (самостоятельно зарегистрированные) пациенты + прикрепление к врачу
+  getUnattachedPatients: () => apiFetch('/patients/unattached'),
+  attachPatient: (id) => apiFetch(`/patients/${id}/attach`, { method: 'POST' }),
 
   // Sessions
   createSession: (data) => apiFetch('/sessions', { method: 'POST', body: JSON.stringify(data) }),

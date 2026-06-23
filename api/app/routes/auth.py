@@ -17,6 +17,9 @@ def _user_out(user: User) -> UserOut:
 
 @router.post("/register", response_model=TokenOut, status_code=201)
 async def register(body: RegisterIn):
+    # Публичная регистрация — ТОЛЬКО пациент. Роли doctor/admin создаёт админ (или сид-скрипт):
+    # так пациент не может сам стать врачом и не выбирает/не прикрепляет себе врача при регистрации.
+    # Врач прикрепляет пациента к себе сам (POST /patients/{id}/attach).
     if not body.consent:
         raise HTTPException(400, "Требуется согласие на обработку персональных данных")
     if await User.find_one(User.username == body.username):
@@ -28,14 +31,15 @@ async def register(body: RegisterIn):
         username=body.username,
         email=body.email,
         password_hash=hash_password(body.password),
-        role=body.role,
+        role="patient",          # принудительно: публично регистрируется только пациент
         consent=body.consent,
     )
     await user.insert()
 
-    if body.role == "patient":
-        patient = Patient(user_id=user.id, full_name=body.username)
-        await patient.insert()
+    # Карточка пациента создаётся БЕЗ врача (doctor_id=None) — «неприкреплённый».
+    # Врач увидит его в списке неприкреплённых и прикрепит к себе.
+    patient = Patient(user_id=user.id, full_name=body.username)
+    await patient.insert()
 
     token = create_token(str(user.id), user.role)
     return TokenOut(access_token=token, user=_user_out(user))
