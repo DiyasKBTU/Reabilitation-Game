@@ -32,12 +32,18 @@ Thumbs.db
 
 # ── Claude Code ───────────────────────────────────────────
 # .claude/ содержит настройки сессий и launch.json — не нужны в репо
-.claude/
+.claude
 
 # ── Docker volumes / data ────────────────────────────────
 mongo-data/
 *.log
 
+# ── ML датасеты (большие, не коммитим — качаются отдельно) ──
+Smartwatch IMU Dataset*/
+ml-service/data/mendeley/
+ml-service/data/pamap2/
+
 # ── Старые файлы (удалены, на всякий случай) ────────────
 name.txt
 test.txt
+docs

@@ -24,6 +24,8 @@ function Svg({ size = 20, className = '', children }) {
 }
 
 export const ActivityIcon = (p) => <Svg {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></Svg>;
+// Лого Axis: две оси (X/Y) со стрелками и точкой-началом — отражает 2-осевое управление/калибровку.
+export const AxisIcon = (p) => <Svg {...p}><path d="M5 19V5" /><path d="M5 19h14" /><polyline points="2.5 8 5 5 7.5 8" /><polyline points="16 16.5 19 19 16 21.5" /><circle cx="5" cy="19" r="1.4" fill="currentColor" stroke="none" /></Svg>;
 export const GamepadIcon = (p) => <Svg {...p}><line x1="6" y1="12" x2="10" y2="12" /><line x1="8" y1="10" x2="8" y2="14" /><line x1="15" y1="13" x2="15.01" y2="13" /><line x1="18" y1="11" x2="18.01" y2="11" /><rect x="2" y="6" width="20" height="12" rx="2" /></Svg>;
 export const TrophyIcon = (p) => <Svg {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" /><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></Svg>;
 export const UserIcon = (p) => <Svg {...p}><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></Svg>;

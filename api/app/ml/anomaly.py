@@ -24,9 +24,23 @@ from typing import List, Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 # ─── Конфигурация ─────────────────────────────────────────────────────────────
+# НЕ поднимать пороги до реальных данных ДЦП. Развёртка на Mendeley (validate_baseline.py)
+# даёт «лучшую» точку 3.0σ/4.0σ, НО: (1) откалибровано на здоровых взрослых, не на детях с ДЦП;
+# (2) при 3.0σ/4.0σ мягкий регресс (ROM×0.85) ловится лишь на 38% — для реабилитации это
+# пропуск раннего спада; (3) корректнее чинить множественность (≥2 метрик/поправка), а не порог.
+# Поэтому держим чувствительные дефолты. Подробности — память baseline-threshold-calibration.
 Z_WARNING    = 1.5
 Z_CRITICAL   = 2.5
 MIN_BASELINE = 3     # минимум прошлых сессий для z-score
+
+# Поправка на множественность (ЭКСПЕРИМЕНТ, по умолчанию ВЫКЛ). Идея: одиночный 1.5σ-флаг при
+# 5 метриках вероятно случаен → требовать подтверждения ≥2 метриками. НО валидация на реальной
+# норме (validate_baseline.py, политика B) дала РОВНО те же специфичность/чувствительность, что и
+# простое «любой флаг»: ложные тревоги здесь НЕ одиночные шумовые, а коррелированные многометричные
+# (реальная вариативность двигает ROM+скорость+плавность вместе) — подтверждение их не отсекает.
+# Поэтому в прод НЕ включаем (нулевая польза = лишняя сложность). Флаг оставлен для воспроизводимого
+# эксперимента и перепроверки, когда появятся реальные размеченные данные ДЦП. См. [[baseline-threshold-calibration]].
+REQUIRE_CORROBORATION = False
 
 # Пороги для MODEL-режима
 PROB_ATTENTION = 0.45   # RF prob ≥ 0.45 → attention
@@ -35,20 +49,24 @@ ISO_WEIGHT     = 0.25   # вес IsolationForest в итоговом счёте
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "anomaly_model.joblib")
 
+# Правила z-score объяснений выровнены с 6 признаками модели (FEATURE_KEYS). tremorIndex
+# намеренно НЕ здесь: это временной дубликат спектрального tremorPower (см. train.py) — держать
+# оба = задвоить тремор в anomalyScore. tremorIndex по-прежнему считается в features.py и
+# показывается врачу как отдельный KPI, но в детектор аномалий идёт только tremorPower.
 RULES = [
     {"key": "rom",            "bad": "down", "label": "Амплитуда (ROM)",       "hint": "снижение — возможна боль/щажение"},
     {"key": "peakVelocity",   "bad": "down", "label": "Скорость движений",     "hint": "замедление — возможна усталость"},
     {"key": "smoothnessIndex","bad": "down", "label": "Плавность движений",    "hint": "рывковость — возможна боль/усталость"},
-    {"key": "tremorIndex",    "bad": "up",   "label": "Тремор",                "hint": "рост дрожания — усталость/неврология"},
     {"key": "tremorPower",    "bad": "up",   "label": "Спектральная дрожь",    "hint": "рост доли мощности в полосе дрожи — усталость/неврология"},
     {"key": "pauseRatio",     "bad": "up",   "label": "Паузы в движении",      "hint": "больше пауз — возможна усталость"},
 ]
 
+# Ядро из 6 признаков модели (урезано с 14; зеркало train.py.FEATURE_KEYS). Порядок и состав
+# ОБЯЗАНЫ совпадать с тем, на чём обучена модель — иначе вектор инференса не сойдётся.
+# При наличии загруженной модели берутся её сохранённые feature_keys (см. _predict_with_model).
 FEATURE_KEYS = [
-    "rom", "minAngle", "maxAngle",
-    "peakVelocity", "meanAbsVelocity", "meanJerk",
-    "smoothnessIndex", "tremorIndex", "tremorFreqHz", "tremorPower",
-    "symmetryIndex", "pauseRatio", "repetitions", "activeTimeSec",
+    "rom", "peakVelocity", "smoothnessIndex",
+    "tremorPower", "pauseRatio", "activeTimeSec",
 ]
 
 
@@ -208,8 +226,20 @@ def _predict_rule_based(current: Dict, history: List[Dict]) -> Dict:
         }
 
     flags, score = _zscore_flags(current, valid)
-    has_critical = any(f["severity"] == "critical" for f in flags)
-    status = "critical" if has_critical else ("attention" if flags else "normal")
+    n_crit = sum(1 for f in flags if f["severity"] == "critical")
+    n_total = len(flags)
+    partial = bool(current.get("partial"))
+
+    if REQUIRE_CORROBORATION and not partial:
+        # Эскалация только при подтверждении ≥2 метриками; одиночный critical → attention.
+        if n_total >= 2:
+            status = "critical" if n_crit >= 1 else "attention"
+        elif n_total == 1:
+            status = "attention" if n_crit >= 1 else "normal"
+        else:
+            status = "normal"
+    else:
+        status = "critical" if n_crit >= 1 else ("attention" if flags else "normal")
 
     return {
         "status":       status,
@@ -248,9 +278,10 @@ def detect_anomalies(
         }
 
     # Частичные признаки (агрегаты Firebase: rom/minAngle/maxAngle, без сырого ряда IMU)
-    # → ПРИНУДИТЕЛЬНО rule-режим. Обученная модель ждёт полный вектор из 12 признаков;
-    # подстановка нулей вместо 9 отсутствующих (peakVelocity, tremorIndex, …) даёт
-    # мусорный anomalyScore. Z-score по доступным признакам (rom) — корректен и честен.
+    # → ПРИНУДИТЕЛЬНО rule-режим. Обученная модель ждёт полный вектор из 6 признаков;
+    # из них на частичных данных доступен только rom — подстановка нулей вместо 5 отсутствующих
+    # (peakVelocity, smoothnessIndex, tremorPower, pauseRatio, activeTimeSec) даёт мусорный
+    # anomalyScore. Z-score по доступным признакам (rom) — корректен и честен.
     partial = bool(current.get("partial"))
 
     # Пробуем ML-модель (только на полном векторе признаков)

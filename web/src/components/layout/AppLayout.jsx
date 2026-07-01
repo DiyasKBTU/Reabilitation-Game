@@ -3,7 +3,7 @@ import useAuthStore from '../../stores/authStore';
 import useBleStore from '../../stores/bleStore';
 import {
   GamepadIcon, TrophyIcon, UserIcon, StethoscopeIcon, SettingsIcon,
-  ActivityIcon, LogOutIcon, BluetoothIcon,
+  ActivityIcon, LogOutIcon, BluetoothIcon, TargetIcon, AxisIcon,
 } from '../icons';
 
 const NAV_ALL = [
@@ -12,7 +12,12 @@ const NAV_ALL = [
   { to: '/leaderboard', label: 'Рейтинг', Icon: TrophyIcon },
   { to: '/profile', label: 'Профиль', Icon: UserIcon },
 ];
+// Калибровка — для пациента (свой диапазон движения). Врачу в меню не нужна.
+const NAV_PATIENT = [
+  { to: '/calibrate', label: 'Калибровка', Icon: TargetIcon },
+];
 const NAV_DOCTOR = [
+  { to: '/doctor', label: 'Обзор', Icon: ActivityIcon, end: true },
   { to: '/doctor/patients', label: 'Пациенты', Icon: StethoscopeIcon },
 ];
 const NAV_ADMIN = [
@@ -28,7 +33,9 @@ export default function AppLayout() {
   const navigate = useNavigate();
 
   const navItems = [
-    ...NAV_ALL,
+    NAV_ALL[0],                                              // Игры
+    ...(user?.role === 'patient' ? NAV_PATIENT : []),        // Калибровка (только пациент)
+    ...NAV_ALL.slice(1),                                     // Устройство, Рейтинг, Профиль
     ...(user?.role === 'doctor' || user?.role === 'admin' ? NAV_DOCTOR : []),
     ...(user?.role === 'admin' ? NAV_ADMIN : []),
   ];
@@ -45,17 +52,18 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="flex items-center gap-2.5 px-3 md:px-4 py-5 border-b border-slate-100">
           <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 text-white shrink-0">
-            <ActivityIcon size={18} />
+            <AxisIcon size={18} />
           </span>
-          <span className="hidden md:block font-bold text-slate-800 text-lg">RehabGame</span>
+          <span className="hidden md:block font-bold text-slate-800 text-lg">Axis</span>
         </div>
 
         {/* Nav */}
         <nav className="flex-1 py-4 space-y-1 px-2">
-          {navItems.map(({ to, label, Icon }) => (
+          {navItems.map(({ to, label, Icon, end }) => (
             <NavLink
               key={to}
               to={to}
+              end={end}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-sm font-medium transition-colors
                 ${isActive

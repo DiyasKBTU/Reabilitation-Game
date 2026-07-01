@@ -1,5 +1,5 @@
 """
-CLI: импорт пациентов/сессий из Firebase Realtime Database в MongoDB RehabGame.
+CLI: импорт пациентов/сессий из Firebase Realtime Database в MongoDB Axis.
 
 Источник — JSON-экспорт RTDB ИЛИ live-URL базы (REST: `<db>/.json`). Формат одинаков.
 Импорт идемпотентен: повторный запуск того же экспорта не плодит дубли (ключ source+source_id).
@@ -161,7 +161,7 @@ async def _import(norm: dict, doctor_oid) -> None:
 
 def main() -> None:
     _ensure_utf8_stdout()
-    ap = argparse.ArgumentParser(description="Импорт Firebase RTDB → MongoDB RehabGame")
+    ap = argparse.ArgumentParser(description="Импорт Firebase RTDB → MongoDB Axis")
     ap.add_argument("source", help="путь к JSON-экспорту ИЛИ URL базы (<db>.firebaseio.com/.json)")
     ap.add_argument("--dry-run", action="store_true", help="только предпросмотр, без записи в БД")
     ap.add_argument("--doctor-id", default=None, help="MongoDB id врача для привязки пациентов")

@@ -44,11 +44,12 @@ RULES = [
     {"key": "pauseRatio",     "bad": "up",   "label": "Паузы в движении",      "hint": "больше пауз — возможна усталость"},
 ]
 
+# Ядро из 6 признаков модели (урезано с 14; зеркало train.py.FEATURE_KEYS). Порядок и состав
+# ОБЯЗАНЫ совпадать с тем, на чём обучена модель — иначе вектор инференса не сойдётся.
+# При наличии загруженной модели берутся её сохранённые feature_keys (см. _predict_with_model).
 FEATURE_KEYS = [
-    "rom", "minAngle", "maxAngle",
-    "peakVelocity", "meanAbsVelocity", "meanJerk",
-    "smoothnessIndex", "tremorIndex", "tremorFreqHz", "tremorPower",
-    "symmetryIndex", "pauseRatio", "repetitions", "activeTimeSec",
+    "rom", "peakVelocity", "smoothnessIndex",
+    "tremorPower", "pauseRatio", "activeTimeSec",
 ]
 
 

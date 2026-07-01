@@ -1,0 +1,23 @@
+{
+  "built_at": "2026-06-29 11:49:49",
+  "source": "Mendeley запястье (154 реальных сессий, норма) + Синтетика v2 (445 окон)",
+  "n_total": 599,
+  "n_normal": 421,
+  "n_anomaly": 178,
+  "feature_keys": [
+    "rom",
+    "peakVelocity",
+    "smoothnessIndex",
+    "tremorPower",
+    "pauseRatio",
+    "activeTimeSec"
+  ],
+  "feature_means": {
+    "rom": 59.281,
+    "peakVelocity": 201.741,
+    "smoothnessIndex": 0.852,
+    "tremorPower": 0.101,
+    "pauseRatio": 0.114,
+    "activeTimeSec": 19.789
+  }
+}

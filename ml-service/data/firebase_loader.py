@@ -1,6 +1,6 @@
 """
 Адаптер реальных данных из Firebase Realtime Database (экспорт JSON) → нормализованные
-сессии/пациенты RehabGame.
+сессии/пациенты Axis.
 
 ВАЖНОЕ ОГРАНИЧЕНИЕ ИСТОЧНИКА (подтверждено на реальном экспорте esp-project-fca3d):
   В экспорте НЕТ сырых временных рядов IMU — только агрегаты по сессии
@@ -42,7 +42,7 @@ def _num(v, d=0.0):
 
 
 def _session_from_agg(sid: str, s: Dict[str, Any]) -> Dict[str, Any]:
-    """Нормализует одну агрегатную сессию Firebase в формат RehabGame (partial features)."""
+    """Нормализует одну агрегатную сессию Firebase в формат Axis (partial features)."""
     rom = _num(s.get("rangeOfMotion"))
     features = {
         "rom": round(rom, 2),

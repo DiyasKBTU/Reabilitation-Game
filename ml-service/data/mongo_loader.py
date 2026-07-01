@@ -5,7 +5,7 @@
 сохраняет полный сырой ряд IMU (`imu_time_series`) в Mongo, а пациент на экране результата
 оценивает самочувствие (`label.pain` 0–2, `label.fatigue` 1–10). Связка «ряд + оценка» даёт
 РЕАЛЬНУЮ метку нормы/аномалии — ground truth для обучения (замыкание петли «data flywheel»,
-см. docs/INVESTOR_AUDIT.md §5 и docs/ML_SPEC.md §6).
+см. docs/ML_SPEC.md §6).
 
 Подключение: `MONGO_URI` из окружения (или localhost). Если Mongo недоступна или pymongo не
 установлен — возвращает ПУСТОЙ датасет, не роняя обучение (train.py продолжит на PAMAP2/синтетике).
@@ -76,6 +76,10 @@ def load_mongo_dataset(axis: str = "r") -> Tuple[List[List[Dict]], List[int], Di
     labels: List[int] = []
     try:
         coll = client[db_name]["sessions"]
+        # Берём ВСЕ сессии: критерий попадания в обучение — наличие ОСОЗНАННОЙ метки
+        # самочувствия (label), а НЕ источник. Сессия идёт в датасет, только если игрок выбрал
+        # сохранить оценку (label есть → label_from_session даёт y). Тест-аккаунты тоже дают
+        # валидные данные (успешные прохождения = «норма»). Сид-данные без label отсеются ниже.
         for doc in coll.find({}, {"imu_time_series": 1, "label": 1, "source": 1}):
             ser = doc.get("imu_time_series") or []
             if len(ser) < MIN_SERIES:

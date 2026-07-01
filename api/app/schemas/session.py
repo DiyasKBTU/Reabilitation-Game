@@ -19,6 +19,13 @@ class SessionCreate(BaseModel):
     level: int = 1
     game_type: str = "game1"
     game_name: str = "Space Catcher"
+    # Направляемая калибровка: клиент явно помечает сессию как калибровочную → её признаки
+    # становятся (перезаписывают) персональный baseline пациента. См. api/app/calibration.py.
+    is_calibration: bool = False
+    # Метрики калибровки (2 оси + точность/реакция), посчитанные на клиенте. Опционально.
+    calibration: Optional[Dict[str, Any]] = None
+    # Игровые метрики реакции на препятствия (City Driver): {reactionMs, avoidanceRate, hazardCount}.
+    performance: Optional[Dict[str, Any]] = None
     imu_time_series: List[Dict[str, Any]] = []
 
 
@@ -39,5 +46,7 @@ class SessionOut(BaseModel):
     duration_sec: float
     level: int
     features: Optional[Dict[str, Any]] = None
+    performance: Optional[Dict[str, Any]] = None
     label: Optional[Dict[str, Any]] = None
+    is_calibration: bool = False
     created_at: datetime

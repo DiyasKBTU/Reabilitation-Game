@@ -103,6 +103,7 @@ const engine = new Game3DEngine(canvas, {
   },
   onState: updateHud,
 });
+window.__game3d = engine;  // debug-хук для standalone-проверки (прод не использует)
 
 // ROM-бар обновляем в своём rAF (без перерисовки HUD каждый кадр)
 function romLoop() {

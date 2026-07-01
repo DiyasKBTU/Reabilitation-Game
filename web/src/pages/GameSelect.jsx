@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../stores/authStore';
-import { TargetIcon, GaugeIcon } from '../components/icons';
+import { api } from '../api/index.js';
+import { TargetIcon, GaugeIcon, BluetoothIcon } from '../components/icons';
 
 const GAMES = [
   {
@@ -26,11 +28,49 @@ const GAMES = [
 export default function GameSelect() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
+  const [needsCalibration, setNeedsCalibration] = useState(false);
+
+  // Пациент: проверяем, зафиксирована ли персональная стартовая точка (калибровка).
+  // Пока нет — показываем онбординг-баннер: первая сессия = калибровочная.
+  useEffect(() => {
+    if (user?.role !== 'patient') return;
+    api.getCalibrationStatus('game1')
+      .then((s) => setNeedsCalibration(!s.calibrated))
+      .catch(() => {});
+  }, [user?.role]);
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-800 mb-1">Игры</h1>
       <p className="text-slate-500 text-sm mb-6">Выберите упражнение для тренировки</p>
+
+      {needsCalibration && (
+        <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 p-4">
+          <div className="flex items-start gap-3">
+            <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white shrink-0">
+              <TargetIcon size={20} />
+            </span>
+            <div className="flex-1">
+              <div className="font-semibold text-blue-900">Сначала — калибровка</div>
+              <p className="text-sm text-slate-600 mt-1 leading-relaxed">
+                Измерим ваш диапазон движения кисти (поворот влево и вправо до упора). Это станет
+                персональной точкой отсчёта — дальше прогресс считается относительно неё. Заодно
+                проверим, что датчик работает.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <button onClick={() => navigate('/calibrate')} className="btn-primary text-sm py-2">
+                  <TargetIcon size={15} /> Пройти калибровку
+                </button>
+                <button
+                  onClick={() => navigate('/device')}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:underline">
+                  <BluetoothIcon size={15} /> Проверить датчик
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         {GAMES.map((game) => {

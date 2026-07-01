@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/index.js';
 import AnomalyBadge from '../components/AnomalyBadge';
 import SessionChart from '../components/SessionChart';
+import MovementTrace from '../components/MovementTrace';
 import Disclaimer from '../components/Disclaimer';
 import {
   NORMS, styleFor, statusOf, fmtMetric, avg, STATUS_STYLE, modeLabel, isMeasured, measuredValue,
@@ -18,9 +19,13 @@ const ICONS = {
   pause: PauseIcon, repeat: RepeatIcon, timer: TimerIcon,
 };
 const KPI_KEYS = ['rom', 'peakVelocity', 'smoothnessIndex', 'tremorIndex', 'tremorPower', 'pauseRatio', 'activeTimeSec'];
+// Метрики калибровочного сравнения (старт → сейчас). Совпадают с BASELINE_METRICS бэкенда.
+const BASELINE_ORDER = ['rom', 'smoothnessIndex', 'peakVelocity', 'tremorIndex', 'pauseRatio'];
 // Вторичная ось управления (multi-axis, напр. газ/тормоз в City Driver) — компактный набор.
 const AXIS_KPI_KEYS = ['rom', 'peakVelocity', 'smoothnessIndex', 'tremorIndex'];
 const GAMES = [['game1', 'Space Catcher'], ['game2', 'City Driver']];
+// Короткие RU-метки классов паттерна движения (для шкал вероятностей). Полные — в pattern.labelRu.
+const PATTERN_RU = { normal: 'Норма', spastic: 'Спастика', asymmetric: 'Асимметрия', tremor: 'Тремор' };
 
 const SEV = {
   critical:  { ...STATUS_STYLE.bad,  label: 'Критично' },
@@ -122,6 +127,36 @@ function ProgressStat({ label, first, last, unit = '', higherBetter = true, pct 
   );
 }
 
+// Калибровочное сравнение «старт → сейчас». Карточка на метрику: значение калибровки →
+// текущее, % изменения, цвет/стрелка по `improved` (направление «лучше» считает бэкенд).
+function BaselineCompare({ delta }) {
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+      {BASELINE_ORDER.filter((k) => delta[k]).map((k) => {
+        const d = delta[k];
+        const n = NORMS[k];
+        const flat = Math.abs(d.change) < (n.pct ? 0.005 : 0.05);
+        const DeltaIcon = flat ? MinusIcon : d.change > 0 ? TrendingUpIcon : TrendingDownIcon;
+        const color = flat ? 'text-slate-400' : d.improved ? 'text-emerald-600' : 'text-red-500';
+        return (
+          <div key={k} className="rounded-xl border border-slate-200 bg-white p-4" title={n.hint}>
+            <div className="text-xs font-medium text-slate-500">{n.label}</div>
+            <div className="flex items-baseline gap-1.5 mt-1.5">
+              <span className="text-sm text-slate-400 tabular-nums">{fmtMetric(k, d.baseline)}{n.unit}</span>
+              <span className="text-slate-300">→</span>
+              <span className="text-xl font-bold text-slate-800 tabular-nums">{fmtMetric(k, d.current)}{n.unit}</span>
+            </div>
+            <div className={`mt-1 inline-flex items-center gap-1 text-xs ${color}`}>
+              <DeltaIcon size={13} />
+              {flat ? 'без изменений' : `${d.changePct > 0 ? '+' : ''}${d.changePct}% от старта`}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -133,6 +168,7 @@ export default function PatientDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [trace, setTrace] = useState(null);   // сырой ряд движения последней пригодной сессии
 
   useEffect(() => {
     setLoading(true);
@@ -148,6 +184,13 @@ export default function PatientDetail() {
     }).catch(() => setError(true))  // транзиентная ошибка не выбрасывает врача со страницы
       .finally(() => setLoading(false));
   }, [id, gameType, reloadKey]);
+
+  // Траектория движения последней аналитически пригодной сессии (сырой ряд IMU).
+  useEffect(() => {
+    const latest = sessions.find((s) => s.features && s.features.valid);
+    if (!latest) { setTrace(null); return; }
+    api.getSessionTrace(latest.id).then(setTrace).catch(() => setTrace(null));
+  }, [sessions]);
 
   if (loading) return <div className="flex items-center justify-center h-full text-slate-400">Загрузка...</div>;
   if (error) return (
@@ -172,6 +215,12 @@ export default function PatientDetail() {
   const anomaly = insights?.anomaly;
   const recs = insights?.recommendations;
   const narr = insights?.narrative;
+  const pattern = insights?.pattern;   // паттерн движения (классификатор, синтетика — подсказка)
+  // Калибровка: персональная точка старта и прогресс относительно неё (с бэкенда).
+  const baseline = insights?.baseline;
+  const delta = insights?.delta_vs_baseline;
+  const analyzableCount = sessions.filter((s) => s.features && s.features.valid).length;
+  const hasBaselineProgress = baseline && delta && Object.keys(delta).length > 0 && analyzableCount > 1;
   const hasData = f && f.valid;
   const partial = !!f?.partial; // частичные данные (агрегаты Firebase): реален только ROM
   const history = sessions.slice(1).map((s) => s.features).filter((x) => x && x.valid);
@@ -219,7 +268,7 @@ export default function PatientDetail() {
         <div className="flex items-center gap-2">
           <FileTextIcon size={22} />
           <div>
-            <div className="font-bold text-lg text-slate-900">Отчёт по реабилитации — RehabGame</div>
+            <div className="font-bold text-lg text-slate-900">Отчёт по реабилитации — Axis</div>
             <div className="text-sm text-slate-600">{patient.full_name}
               {patient.diagnosis ? ` · ${patient.diagnosis}` : ''}{patient.age ? ` · ${patient.age} лет` : ''}</div>
           </div>
@@ -273,6 +322,28 @@ export default function PatientDetail() {
       {/* ──────────── ОБЗОР ──────────── */}
       {hasData && (tab === 0) && (
         <div className="space-y-5">
+          {/* Качество/источник данных анализируемой сессии — честный контекст под цифрами */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm">
+            <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-slate-600">
+              <span className={`w-1.5 h-1.5 rounded-full ${f?.partial ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+              <span className="font-medium text-slate-700">Качество данных:</span>
+              {f?.partial
+                ? <span className="text-amber-700">частичные (агрегаты устройства) — часть метрик не измерена («—»)</span>
+                : <span className="text-emerald-700">полный ряд движения (IMU)</span>}
+              <span className="text-slate-300">·</span>
+              <span>пригодных сессий: {analyzableCount} из {sessions.length}</span>
+              {anomaly?.baselineSize != null && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span>
+                    норма по {anomaly.baselineSize} сесс.
+                    {anomaly.baselineSize < 3 && <span className="text-amber-700"> (мало — вердикт предварительный)</span>}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Clinical narrative (LLM-explainer / авто-сводка) */}
           {narr?.text && (
             <Section
@@ -285,6 +356,41 @@ export default function PatientDetail() {
               }
             >
               <p className="text-sm text-slate-700 leading-relaxed">{narr.text}</p>
+            </Section>
+          )}
+
+          {/* Паттерн движения (классификатор, синтетика — подсказка, не диагноз) */}
+          {pattern && (
+            <Section
+              title="Паттерн движения"
+              aside={
+                <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                  <BrainIcon size={13} /> подсказка, не диагноз
+                </span>
+              }
+            >
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-lg font-semibold text-slate-800">{pattern.labelRu}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${pattern.lowConfidence ? 'bg-slate-100 text-slate-500' : 'bg-violet-100 text-violet-700'}`}>
+                  уверенность {Math.round((pattern.confidence ?? 0) * 100)}%{pattern.lowConfidence ? ' · низкая' : ''}
+                </span>
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {Object.entries(pattern.probs || {})
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([cls, p]) => (
+                    <div key={cls} className="flex items-center gap-2">
+                      <span className="w-24 shrink-0 text-xs text-slate-500">{PATTERN_RU[cls] || cls}</span>
+                      <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div className="h-full rounded-full bg-violet-400" style={{ width: `${Math.round(p * 100)}%` }} />
+                      </div>
+                      <span className="w-9 text-right text-xs tabular-nums text-slate-500">{Math.round(p * 100)}%</span>
+                    </div>
+                  ))}
+              </div>
+              <p className="text-xs text-slate-400 mt-3">
+                Распознавание паттерна обучено на синтетике (модель {pattern.modelVersion}). Поддержка решения врача, не диагноз.
+              </p>
             </Section>
           )}
 
@@ -329,6 +435,35 @@ export default function PatientDetail() {
             </div>
           )}
 
+          {/* Калибровка: персональная стартовая точка и прогресс от неё */}
+          {baseline && (
+            hasBaselineProgress ? (
+              <Section title="От калибровки до сейчас"
+                aside={
+                  <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+                    <TargetIcon size={13} />
+                    старт {new Date(baseline.calibrated_at).toLocaleDateString('ru')}
+                  </span>
+                }>
+                <BaselineCompare delta={delta} />
+                <p className="text-xs text-slate-400 mt-3">
+                  Прогресс считается относительно первой (калибровочной) сессии — персональной нормы пациента.
+                </p>
+              </Section>
+            ) : (
+              <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 flex items-start gap-3">
+                <TargetIcon size={20} className="text-blue-600 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-semibold text-blue-800">Калибровка выполнена</div>
+                  <p className="text-sm text-slate-600 mt-0.5">
+                    Стартовая точка зафиксирована {new Date(baseline.calibrated_at).toLocaleDateString('ru')}.
+                    Прогресс относительно неё появится со следующей сессии.
+                  </p>
+                </div>
+              </div>
+            )
+          )}
+
           {/* KPI grid */}
           <Section title="Последняя сессия"
             aside={<span className="text-xs text-slate-400">
@@ -350,6 +485,19 @@ export default function PatientDetail() {
               </p>
             )}
           </Section>
+
+          {/* Траектория движения — реальный сигнал датчика (доказывает, что данные настоящие) */}
+          {trace?.points?.length > 0 && (
+            <Section title="Траектория движения"
+              aside={<span className="text-xs text-slate-400">
+                {trace.is_calibration ? 'калибровочная сессия' : 'последняя сессия'} · {trace.count} точек
+              </span>}>
+              <MovementTrace points={trace.points} />
+              <p className="text-xs text-slate-400 mt-2">
+                Реальный сигнал датчика: угол поворота кисти (roll) во времени, после нейтрализации.
+              </p>
+            </Section>
+          )}
 
           {/* Вторичная ось управления (multi-axis: напр. газ/тормоз в City Driver).
               Теперь анализируется и входит в общий вердикт — показываем её собственный статус. */}
@@ -412,15 +560,15 @@ export default function PatientDetail() {
               <div className="grid md:grid-cols-2 gap-x-6 gap-y-4">
                 <div>
                   <div className="text-xs font-medium text-slate-500 mb-1">Амплитуда (ROM), °</div>
-                  <SessionChart sessions={sessions} metric="rom" label="ROM" color="#10b981" />
+                  <SessionChart sessions={sessions} metric="rom" label="ROM" color="#10b981" baseline={baseline?.features?.rom} />
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500 mb-1">Плавность, %</div>
-                  <SessionChart sessions={sessions} metric="smoothnessIndex" label="Плавность" color="#3b82f6" />
+                  <SessionChart sessions={sessions} metric="smoothnessIndex" label="Плавность" color="#3b82f6" baseline={baseline?.features?.smoothnessIndex} />
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500 mb-1">Тремор, %</div>
-                  <SessionChart sessions={sessions} metric="tremorIndex" label="Тремор" color="#f59e0b" />
+                  <SessionChart sessions={sessions} metric="tremorIndex" label="Тремор" color="#f59e0b" baseline={baseline?.features?.tremorIndex} />
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500 mb-1">Игровой результат</div>
@@ -498,7 +646,10 @@ export default function PatientDetail() {
                     const sf = s.features;
                     return (
                       <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50">
-                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(s.created_at).toLocaleDateString('ru')}</td>
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                          {new Date(s.created_at).toLocaleDateString('ru')}
+                          {s.is_calibration && <span className="ml-2 badge-info" title="Калибровочная сессия — персональная точка старта">старт</span>}
+                        </td>
                         <td className="px-4 py-3 font-semibold text-slate-800 tabular-nums">{s.score}</td>
                         <td className="px-4 py-3"><Cell k="rom" v={measuredValue('rom', sf)} /></td>
                         <td className="px-4 py-3 hidden sm:table-cell"><Cell k="smoothnessIndex" v={measuredValue('smoothnessIndex', sf)} /></td>

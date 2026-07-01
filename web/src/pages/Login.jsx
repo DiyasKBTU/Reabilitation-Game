@@ -12,7 +12,7 @@ const DEMO = {
 // Куда вести после входа в зависимости от роли.
 function routeFor(user) {
   if (user?.role === 'admin') return '/admin';
-  if (user?.role === 'doctor') return '/doctor/patients';
+  if (user?.role === 'doctor') return '/doctor';
   return '/game';
 }
 
@@ -67,9 +67,9 @@ export default function Login() {
 
       {demoMode && (
         <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 p-4">
-          <div className="text-sm font-semibold text-blue-800 mb-1">Демо для инвесторов</div>
+          <div className="text-sm font-semibold text-blue-800 mb-1">Быстрый вход (тест)</div>
           <p className="text-xs text-slate-500 mb-3">
-            Вход в один клик — данные пациентов и ML-аналитика уже заполнены.
+            Вход в один клик по тестовым учёткам — данные и ML-аналитика уже заполнены.
           </p>
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={() => handleDemo('doctor')} disabled={!!demoBusy}
@@ -86,11 +86,12 @@ export default function Login() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="label">Логин</label>
+          <label className="label">ИИН или логин</label>
           <input
             className="input"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
+            placeholder="Пациент — ИИН (12 цифр)"
             required autoFocus autoComplete="username"
           />
         </div>

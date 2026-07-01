@@ -12,6 +12,9 @@ class User(Document):
     role: Literal["patient", "doctor", "admin"] = "patient"
     platform_access: bool = True
     database_access: bool = True
+    # Тестовая учётка (создана админом для проверки/игры). Изолирована от реальных пациентов
+    # (свой patient_id), помечается в UI и полностью удаляется через DELETE /admin/test-users.
+    is_test: bool = False
     # Согласие на обработку персональных данных (дано при регистрации). Для медданных это
     # требование этики/безопасности; опционально (default False) — старые учётки не ломаются.
     consent: bool = False

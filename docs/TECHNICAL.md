@@ -1,6 +1,18 @@
 # RehabGame — Техническая документация
 
-> Актуально на 2026-06-05. Стек: FastAPI + MongoDB + React + BLE (ESP32-C3).
+> Актуально на 2026-06-30. Стек: FastAPI + MongoDB + React + BLE (ESP32-C3).
+
+### Карта документации (что где искать)
+| Документ | Назначение |
+|----------|-----------|
+| **TECHNICAL.md** (этот) | Полная техническая картина: архитектура, API, схема БД, ML, запуск |
+| **ML_CONTRACT.md** | Контракт ответа ML (признаки, аномалия, паттерн, рекомендации) — формат данных |
+| **CHANGELOG.md** | История изменений по версиям/датам |
+| **WORK_PLAN.md** | Живой resumable-план (6-недельный трекинг ML): что сделано / что дальше |
+| **BACKLOG.md** | Слабости/баги/возможности — для дальнейших исправлений |
+| **HOW_IT_WORKS.md** | Объяснение «простыми словами» для новичка (глоссарий, путь движения) |
+| **RESEARCH_DCP.md** | Доказательная база ДЦП (формы, MACS, литература) |
+| **ML_SPEC.md** | Историко-референсные ML-заметки (Firebase-схема, LLM-принцип) |
 
 ---
 
@@ -103,15 +115,16 @@ rehabgame/
 ### Auth
 | Метод | Путь | Тело | Ответ | Роль |
 |-------|------|------|-------|------|
-| POST | `/auth/register` | `{username, email, password, consent}` | `{access_token, user}` | — (только пациент; роль не выбирается) |
-| POST | `/auth/login` | `{username, password}` | `{access_token, user}` | — |
+| POST | `/auth/register` | `{iin, password, consent, full_name?, diagnosis?, age?, gender?}` (ИИН=логин; email синтезируется, если не задан) | `{access_token, user}` | — (только пациент; медданные → карта `patients`) |
+| POST | `/auth/register-doctor` | `{username, email, password, invite_code, consent}` | `{access_token, user}` | — (роль doctor; только по коду от админа, B2B-онбординг) |
+| POST | `/auth/login` | `{username, password}` (username = ИИН для пациента) | `{access_token, user}` | — |
 | GET | `/auth/me` | — | `{id, username, email, role}` | любая |
 
 ### Patients
 | Метод | Путь | Описание | Роль |
 |-------|------|----------|------|
 | GET | `/patients` | Список: doctor→свои, admin→все, patient→себя | любая |
-| POST | `/patients` | Создать пациента | doctor/admin |
+| POST | `/patients` | Создать пациента; с `create_login`+`iin` заводит вход (ИИН=логин, авто-ПИН возвращается один раз) | doctor/admin |
 | GET | `/patients/unattached` | Самозарегистрированные пациенты без врача (кандидаты на прикрепление) | doctor/admin |
 | GET | `/patients/{id}` | Карточка пациента | любая |
 | PATCH | `/patients/{id}` | Обновить данные | doctor/admin |
@@ -120,10 +133,12 @@ rehabgame/
 ### Sessions
 | Метод | Путь | Описание | Роль |
 |-------|------|----------|------|
-| POST | `/sessions` | Сохранить сессию (считает features, гард валидности) | любая |
+| POST | `/sessions` | Сохранить сессию (считает features, гард валидности; `is_calibration=true` → перезапись baseline) | любая |
 | GET | `/sessions?patient_id&game_type&limit` | Список сессий | любая |
 | GET | `/sessions/{id}` | Одна сессия | любая |
+| GET | `/sessions/{id}/trace?max_points` | Сырой ряд движения (downsampled) для графика траектории | любая |
 | PATCH | `/sessions/{id}/label` | Добавить метку (боль, усталость) | любая |
+| GET | `/sessions/calibration/status?game_type&patient_id` | Откалиброван ли пациент в игре (есть ли baseline) | любая |
 
 **Гард качества сессии (`POST /sessions`).** «Пустой прогон» — игру запустили и не
 управляли, машина/платформа разбилась, сработал `onGameOver` → сохраняется сессия с
@@ -133,16 +148,27 @@ ROM≈0 и почти нулевыми признаками. Такая сесс
 Зеркалит логику `ingest/firebase.py` (game1 с ROM=0 → `valid=False`). Отдельный слой
 поверх вектора признаков → паритет `features.py` не затрагивается.
 
+**Калибровка / персональный baseline (`api/app/calibration.py`).** Первая аналитически
+пригодная сессия пациента в каждой игре фиксируется как «калибровочная»
+(`Session.is_calibration=True`), её признаки сохраняются как стартовая точка в
+`Patient.baselines[game_type]`. Прогресс считается ОТНОСИТЕЛЬНО неё (важно для ДЦП —
+«норма» индивидуальна). `ensure_baseline()` идемпотентна и бэкфиллит baseline существующим
+карточкам из самой ранней пригодной сессии (миграция данных не нужна). `compute_deltas()`
+даёт изменение текущей сессии vs baseline по ключевым метрикам → `/insights.delta_vs_baseline`.
+
 ### Аналитика и прочее
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/insights/{patient_id}?game_type` | ML-аналитика пациента (по последней ВАЛИДНОЙ сессии) |
+| GET | `/insights/{patient_id}?game_type` | ML-аналитика по последней ВАЛИДНОЙ сессии: признаки, аномалия, рекомендации, нарратив, **паттерн движения** (`pattern`) |
 | GET | `/leaderboard?game_type&limit` | Рейтинг |
-| GET | `/profile` | Профиль текущего пользователя |
-| PATCH | `/profile` | Обновить профиль |
+| GET | `/profile` | Профиль пользователя; для пациента включает медкарту (`patient`: full_name, diagnosis, age, gender) |
+| PATCH | `/profile` | Обновить профиль (email + для пациента — своя медкарта) |
 | GET | `/admin/users` | Все пользователи | admin |
 | PATCH | `/admin/users/{id}` | Изменить роль/доступ | admin |
 | DELETE | `/admin/users/{id}` | Удалить пользователя | admin |
+| GET | `/admin/doctor-invites` | Список кодов-приглашений для врачей | admin |
+| POST | `/admin/doctor-invites` | Сгенерировать одноразовый код врача | admin |
+| DELETE | `/admin/doctor-invites/{id}` | Удалить код | admin |
 | GET | `/health` | Статус сервиса + версия ML-модели + `demo_mode` |
 
 ### ML (отдельный роутер, можно тестировать изолированно)
@@ -167,16 +193,21 @@ created_at: datetime
 ### Patient
 ```
 user_id: ObjectId?   doctor_id: ObjectId?   full_name: str
+iin: str?                          # ИИН (12 цифр) = логин пациента (User.username = iin)
 diagnosis: str?  age: int?  gender: str?  created_at: datetime
 source: str?  source_id: str?     # провенанс импорта (напр. "firebase" + ключ RTDB)
+baselines: dict                    # калибровка: {game_type: {session_id, features, calibrated_at, game_name}}
 ```
 
 ### Session
 ```
 patient_id: ObjectId  doctor_id: ObjectId?  game_type: str  game_name: str
 score: int  max_combo: int  zone_hits: int  duration_sec: float  level: int
+is_calibration: bool               # калибровочная (первая пригодная) сессия → персональный baseline
+calibration: dict?                 # метрики направляемой калибровки 2 осей: {rollMin/Max/Rom, pitchMin/Max/Rom, targets:{total,hit,avgMs}}
 imu_time_series: [{t, r, p, y}]    # ряд углов, 25 Гц, НЕсглаженный (calib) — покрывает полосу тремора 3–12 Гц
 features: dict?  label: dict?
+performance: dict?                 # реакция на препятствия (City Driver): {reactionMs, avoidanceRate, hazardCount}; навык для врача, не в модель
 axis_features: dict?               # multi-axis игры: {ось: features} по вторичным осям (напр. pitch в City Driver); не идут в модель
 device_metrics: dict?              # агрегаты устройства из Firebase (strengthIndex, movementCount, …)
 source: str?  source_id: str?      # провенанс импорта (идемпотентность); features.partial=True у импорта
@@ -187,6 +218,15 @@ created_at: datetime
 ```
 patient_id: ObjectId  username: str  game_type: str  score: int  created_at: datetime
 ```
+
+### DoctorInvite
+```
+code: str (unique)   created_by: ObjectId    # админ, выпустивший код
+used_by: ObjectId?   used_at: datetime?       # врач, использовавший код (одноразовый)
+created_at: datetime
+```
+Одноразовый код для регистрации врача (B2B). Генерит админ (`POST /admin/doctor-invites`),
+врач регистрируется по нему (`POST /auth/register-doctor`) → роль doctor.
 
 ---
 
@@ -215,15 +255,27 @@ patient_id: ObjectId  username: str  game_type: str  score: int  created_at: dat
   `ingest/firebase.py`). Срабатывает и ретроспективно на старых сессиях с `valid=True`, ROM≈0.
 
 ### Модель аномалий
-- `api/app/ml/models/anomaly_model.joblib` — IsolationForest + RandomForest + RobustScaler
-- Версия **v6-2026-06-08-spectral-synthetic**, `validation: none`, обучена на синтетике (600 сессий),
-  вектор из 14 признаков (добавлены спектральные `tremorFreqHz`/`tremorPower`)
-- ROC-AUC 0.990 **посчитан на синтетике** (label = параметры генератора) → это НЕ клиническая
+- `api/app/ml/models/anomaly_model.joblib` — IsolationForest + RandomForest(калибр.) + RobustScaler
+- Версия **v7-2026-06-10-realdata-mixed**, `validation: none`, обучена на Mendeley (154 реальные
+  сессии-нормы) + синтетика ДЦП (445), всего 599. **Вектор из 6 признаков** (rom, peakVelocity,
+  smoothnessIndex, tremorPower, pauseRatio, activeTimeSec) — урезано с 14 (убраны дубли; см. ML_CONTRACT §1).
+- ROC-AUC 0.998 **посчитан на синтетике** (label = параметры генератора) → это НЕ клиническая
   метрика. До клин. валидации основной механизм аномалий — персональный z-score baseline (rule-режим).
-- Статус модели: `GET /api/ml/health` (поля `validation`, `synthetic_only`, `metrics_note`).
+- Статус модели: `GET /api/ml/health` и `/api/health` (поля `validation`, `synthetic_only`, `metrics_note`).
 - Переобучить (Windows, из корня): `$env:PYTHONPATH="ml-service"; $env:PYTHONIOENCODING="utf-8";`
   `venv\Scripts\python.exe -m app.train`, затем скопировать joblib в `api/app/ml/models/`.
-- Тесты признаков: `venv\Scripts\python.exe -m pytest ml-service/tests/ -v` (5 проверок)
+- Тесты: `pytest ml-service/tests/ -v` (10) + `cd api && pytest tests/ -v` (20).
+
+### Классификатор паттерна движения
+- `api/app/ml/models/pattern_model.joblib` — мультиклассовый RandomForest(калибр.) + RobustScaler.
+  Инференс: `api/app/ml/pattern.py`; обучение: `ml-service/app/train_pattern.py`.
+- Отдельная задача от аномалий: не «хуже личной нормы», а «на какой ПАТТЕРН похоже движение».
+  4 класса: `normal` / `spastic` / `asymmetric` (гемипарез) / `tremor` (дискинезия+атаксия).
+- Версия **pattern-v1-2026-06-30-synthetic**, `validation: none`. Метрики (синтетика): accuracy 95%,
+  macro F1 0.95, ROC-AUC OvR 0.996. **Подсказка паттерна, НЕ диагноз.**
+- Отдаётся в `/api/insights.pattern` (см. ML_CONTRACT §6); `null` для partial/невалидных сессий.
+  Переобучить: `cd ml-service && ../venv/Scripts/python.exe -m app.train_pattern` → копировать joblib в `api/`.
+- Тесты: `api/tests/test_pattern.py` (5).
 
 ---
 

@@ -4,13 +4,21 @@ import { api } from '../api/index.js';
 import { PlusIcon, SearchIcon, UsersIcon, ChevronRightIcon, AlertTriangleIcon } from '../components/icons';
 
 function NewPatientModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ full_name: '', diagnosis: '', age: '', gender: '' });
+  const [form, setForm] = useState({
+    full_name: '', diagnosis: '', age: '', gender: '',
+    create_login: false, iin: '', pin: '',
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [created, setCreated] = useState(null);   // {iin, pin} — креды входа после создания
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    if (form.create_login && !/^\d{12}$/.test(form.iin)) {
+      setError('Для входа нужен ИИН из 12 цифр');
+      return;
+    }
     setLoading(true);
     try {
       const patient = await api.createPatient({
@@ -18,13 +26,35 @@ function NewPatientModal({ onClose, onCreated }) {
         diagnosis: form.diagnosis || undefined,
         age: form.age ? parseInt(form.age) : undefined,
         gender: form.gender || undefined,
+        iin: form.iin || undefined,
+        create_login: form.create_login,
+        pin: form.pin || undefined,
       });
-      onCreated(patient);
+      onCreated(patient);                          // добавить в список (модалку не закрываем сами)
+      if (patient.pin) setCreated({ iin: patient.iin, pin: patient.pin });  // показать креды
+      else onClose();
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  // Экран с выданными данными входа (показываются один раз — передать родителю).
+  if (created) {
+    return (
+      <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div className="card p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <h2 className="text-lg font-bold text-slate-800 mb-1">Пациент создан</h2>
+          <p className="text-sm text-slate-500 mb-4">Данные для входа — передайте родителю. ПИН показывается один раз.</p>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-1 font-mono text-slate-800">
+            <div>ИИН (логин): <b>{created.iin}</b></div>
+            <div>ПИН (пароль): <b>{created.pin}</b></div>
+          </div>
+          <button onClick={onClose} className="btn-primary w-full mt-5">Готово</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -64,6 +94,32 @@ function NewPatientModal({ onClose, onCreated }) {
               </select>
             </div>
           </div>
+
+          {/* Вход для пациента: ИИН (логин) + ПИН (авто, можно задать свой) */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={form.create_login}
+                onChange={(e) => setForm({ ...form, create_login: e.target.checked })} />
+              Создать вход (ребёнок играет сам)
+            </label>
+            {form.create_login && (
+              <div className="mt-3 space-y-2">
+                <div>
+                  <label className="label">ИИН ребёнка (логин)</label>
+                  <input className="input" value={form.iin} inputMode="numeric" maxLength={12}
+                    onChange={(e) => setForm({ ...form, iin: e.target.value.replace(/\D/g, '') })}
+                    placeholder="12 цифр" />
+                </div>
+                <div>
+                  <label className="label">ПИН <span className="font-normal text-slate-400">(пусто — сгенерируем)</span></label>
+                  <input className="input" value={form.pin}
+                    onChange={(e) => setForm({ ...form, pin: e.target.value })}
+                    placeholder="Авто" />
+                </div>
+              </div>
+            )}
+          </div>
+
           {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Отмена</button>
@@ -120,7 +176,7 @@ export default function PatientList() {
 
   function handleCreated(patient) {
     setPatients((prev) => [patient, ...prev]);
-    setShowModal(false);
+    // модалку НЕ закрываем здесь: если создан вход — она сама покажет ИИН/ПИН, затем onClose.
   }
 
   return (
@@ -204,7 +260,10 @@ export default function PatientList() {
                   className="border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer transition-colors"
                   onClick={() => navigate(`/doctor/patient/${p.id}`)}
                 >
-                  <td className="px-4 py-3 font-medium text-slate-800">{p.full_name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    {p.full_name}
+                    {p.is_test && <span className="badge badge-info ml-2">ТЕСТ</span>}
+                  </td>
                   <td className="px-4 py-3 text-slate-500 hidden sm:table-cell">
                     {p.diagnosis || <span className="text-slate-300">—</span>}
                   </td>

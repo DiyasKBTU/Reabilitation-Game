@@ -1,4 +1,4 @@
-# RehabGame ML-service
+# Axis ML-service
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6

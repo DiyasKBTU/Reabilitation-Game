@@ -134,6 +134,17 @@ Firebase без сырого ряда IMU (`features.partial=true`). В этом
   },                          // эти оси ВХОДЯТ в общий anomaly (§2, leadAxis/axesAnalyzed);
                               // recommendations/narrative считаются по ОСНОВНОЙ оси (features)
   "anomaly": { ... },         // §2
+  "baseline": {               // калибровка: персональная стартовая точка пациента. null до 1-й пригодной сессии.
+    "session_id": "...",      // id калибровочной (первой пригодной) сессии
+    "features": { ... },      // её признаки §1 — точка отсчёта
+    "calibrated_at": "2026-05-24T...",
+    "game_name": "Space Catcher"
+  },
+  "delta_vs_baseline": {      // прогресс текущей сессии vs baseline по ключевым метрикам. {} если baseline нет.
+    "rom":             { "baseline": 42.0, "current": 61.0, "change": 19.0, "changePct": 46.5, "improved": true },
+    "smoothnessIndex": { "baseline": 0.81, "current": 0.90, "change": 0.09, "changePct": 11.1, "improved": true }
+    // также: peakVelocity, tremorIndex, pauseRatio. improved учитывает направление «лучше» (тремор/паузы ↓ = улучшение)
+  },
   "recommendations": { ... }, // §3
   "trends": {
     "rom":   { "direction": "up|down|stable", "slope": 1.2 },
@@ -144,6 +155,8 @@ Firebase без сырого ряда IMU (`features.partial=true`). В этом
     "source": "template",       // "template" (детерминированный) | "llm"
     "provider": "none"          // none | openai | claude
   },
+  "pattern": { ... },           // §6 — паттерн движения (норма/спастика/асимметрия/тремор). null
+                                // для partial/невалидных сессий. Подсказка, НЕ диагноз.
   "alerts": [
     { "type": "critical|attention", "message": "..." }
   ],
@@ -165,3 +178,39 @@ Firebase без сырого ряда IMU (`features.partial=true`). В этом
 | GET | `/api/ml/health` | — | `{model_loaded, model_version, n_train, mode}` |
 
 **Правило совместимости:** модель может менять значения внутри `anomaly`/`recommendations`, но не структуру ответа.
+
+---
+
+## 6. Паттерн движения (`pattern`)
+
+Возвращается в `GET /api/insights/{patient_id}`. Мультиклассовый классификатор (RandomForest,
+калибр.) распознаёт ПАТТЕРН моторики по основной оси. Реализация: `api/app/ml/pattern.py`,
+обучение: `ml-service/app/train_pattern.py`. Отдельная задача от `anomaly` (та ловит «хуже личной
+нормы»; этот — «на какой паттерн похоже»).
+
+```jsonc
+{
+  "label": "tremor",            // normal | spastic | asymmetric | tremor
+  "labelRu": "Тремор / гиперкинез",
+  "confidence": 0.78,           // 0..1 — вероятность выбранного класса (predict_proba)
+  "lowConfidence": false,       // true, если confidence < 0.45 (паттерн неоднозначен)
+  "probs": {                    // вероятности по всем классам (сумма ≈ 1)
+    "normal": 0.10, "spastic": 0.08, "asymmetric": 0.04, "tremor": 0.78
+  },
+  "modelVersion": "pattern-v1-2026-06-30-synthetic",
+  "validation": "none",         // нет клинической валидации (обучено на синтетике)
+  "note": "Распознавание паттерна обучено на синтетике — подсказка, не диагноз."
+}
+```
+
+**Классы** ← синтетические профили ДЦП (`data/synthetic.py`): `normal` (норма+пограничная),
+`spastic` (гипертонус: ↓ROM, рывковость, паузы), `asymmetric` (гемипарез: асимметрия диапазона),
+`tremor` (дискинезия+атаксия: высокий `tremorPower`). Признаки модели: `rom`, `peakVelocity`,
+`smoothnessIndex`, `tremorPower`, `tremorFreqHz`, `pauseRatio`, `rangeAsym` (асимметрия диапазона).
+
+**`pattern` = null**, когда: признаков нет/`valid=false`; данные `partial` (агрегаты Firebase без
+сырого ряда — нет `tremorPower`/плавности); модель не загружена.
+
+⚠️ **Честно:** `validation=none` — классы заданы генератором синтетики, клинически не подтверждены.
+Это ПОДСКАЗКА паттерна врачу, не диагностика. Метрики обучения (macro F1 ~0.95, ROC-AUC OvR ~0.995)
+— на синтетике, не доказательство клинической точности.

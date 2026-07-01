@@ -11,10 +11,12 @@ import { NORMS, goodThreshold, measuredValue } from '../lib/clinical';
  */
 export default function SessionChart({
   sessions, metric = 'score', label = 'Очки', color = '#3b82f6',
-  height = 190, showNorm = true,
+  height = 190, showNorm = true, baseline = null,
 }) {
   const norm = NORMS[metric];
   const isPct = !!norm?.pct;
+  // Линия персональной точки старта (калибровка) в единицах графика.
+  const baseVal = baseline == null ? null : (isPct ? baseline * 100 : baseline);
 
   const data = [...sessions]
     .reverse()
@@ -50,6 +52,10 @@ export default function SessionChart({
         {ref != null && (
           <ReferenceLine y={ref} stroke="#10b981" strokeDasharray="4 4" strokeOpacity={0.7}
             label={{ value: `норма ${norm.higherBetter ? '≥' : '≤'} ${ref}${norm.unit}`, position: 'insideTopRight', fontSize: 10, fill: '#10b981' }} />
+        )}
+        {baseVal != null && (
+          <ReferenceLine y={baseVal} stroke="#3b82f6" strokeDasharray="5 3" strokeOpacity={0.6}
+            label={{ value: 'старт', position: 'insideBottomRight', fontSize: 10, fill: '#3b82f6' }} />
         )}
         <Tooltip
           contentStyle={{ fontSize: 12, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}

@@ -9,8 +9,10 @@ from ..ml.features import extract_features
 from ..ml.multiaxis import analyze_axes
 from ..ml.recommendations import build_recommendations
 from ..ml.narrative import build_narrative
+from ..ml.pattern import classify_pattern
 from ..ml.games import analyzed_axes_for_game, axis_for_game, secondary_axes_for_game
 from ..ml.validity import is_analyzable, mark_validity
+from ..calibration import ensure_baseline, compute_deltas
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
@@ -44,7 +46,7 @@ async def get_insights(
     game_type: Optional[str] = Query("game1"),
     user: User = Depends(get_current_user),
 ):
-    await verify_patient_access(patient_id, user)   # IDOR-гард: только свой пациент
+    patient = await verify_patient_access(patient_id, user)   # IDOR-гард + загрузка карточки
     sessions = (
         await Session.find(
             {"patient_id": PydanticObjectId(patient_id), "game_type": game_type}
@@ -139,6 +141,8 @@ async def get_insights(
     primary_history = history_by_axis.get(primary_axis, [])
     trends = _compute_trends(list(reversed(analyzable)))
     recommendations = build_recommendations(features, primary_history, anomaly, trends)
+    # Паттерн движения (норма/спастика/асимметрия/тремор) — по основной оси. Подсказка, не диагноз.
+    pattern = classify_pattern(features)
 
     alerts = []
     if anomaly.get("status") == "critical":
@@ -148,13 +152,20 @@ async def get_insights(
 
     narrative = build_narrative(features, anomaly, recommendations, trends)
 
+    # Калибровка: персональная точка старта + прогресс текущей сессии относительно неё.
+    baseline = await ensure_baseline(patient, gt)
+    delta_vs_baseline = compute_deltas(features, baseline.get("features") if baseline else None)
+
     return InsightsOut(
         features=features,
         axis_features=axis_features,
         anomaly=anomaly,
+        baseline=baseline,
+        delta_vs_baseline=delta_vs_baseline,
         recommendations=recommendations,
         trends=trends,
         narrative=narrative,
+        pattern=pattern,
         alerts=alerts,
         game_type=game_type or "game1",
         session_count=len(sessions),

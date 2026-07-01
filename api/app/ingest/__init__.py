@@ -1,1 +1,1 @@
-"""Импорт внешних источников данных в RehabGame (Firebase RTDB → MongoDB)."""
+"""Импорт внешних источников данных в Axis (Firebase RTDB → MongoDB)."""

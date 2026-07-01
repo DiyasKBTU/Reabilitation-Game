@@ -5,11 +5,15 @@ import useAuthStore from './stores/authStore';
 import AppLayout from './components/layout/AppLayout';
 import AuthLayout from './components/layout/AuthLayout';
 
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import RegisterDoctor from './pages/RegisterDoctor';
 import GameSelect from './pages/GameSelect';
+import Calibration from './pages/Calibration';
 import Game2D from './pages/Game2D';
 import SessionResult from './pages/SessionResult';
+import Dashboard from './pages/Dashboard';
 import PatientList from './pages/PatientList';
 import PatientDetail from './pages/PatientDetail';
 import Leaderboard from './pages/Leaderboard';
@@ -50,16 +54,20 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Публичная главная страница */}
+        <Route path="/" element={<Landing />} />
+
         {/* Auth */}
         <Route element={<AuthLayout />}>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/register-doctor" element={<RegisterDoctor />} />
         </Route>
 
         {/* App */}
         <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-          <Route index element={<Navigate to="/game" replace />} />
           <Route path="/game" element={<GameSelect />} />
+          <Route path="/calibrate" element={<Calibration />} />
           <Route path="/game/2d" element={<Game2D />} />
           <Route path="/game/3d" element={<Suspense fallback={<GameLoading />}><Game3D /></Suspense>} />
           <Route path="/session/:id/result" element={<SessionResult />} />
@@ -67,14 +75,15 @@ export default function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/device" element={<DeviceSetup />} />
 
+          <Route path="/doctor" element={<RequireDoctor><Dashboard /></RequireDoctor>} />
           <Route path="/doctor/patients" element={<RequireDoctor><PatientList /></RequireDoctor>} />
           <Route path="/doctor/patient/:id" element={<RequireDoctor><PatientDetail /></RequireDoctor>} />
 
           <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
         </Route>
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/game" replace />} />
+        {/* Fallback → главная */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

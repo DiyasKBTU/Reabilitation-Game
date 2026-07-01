@@ -1,5 +1,5 @@
 """
-Нормализатор экспорта Firebase Realtime Database → структуры RehabGame для импорта в MongoDB.
+Нормализатор экспорта Firebase Realtime Database → структуры Axis для импорта в MongoDB.
 
 Чистый модуль (без I/O и без обращения к БД) — тестируется отдельно (api/tests/).
 Чтение файла/URL и запись в Mongo — в api/scripts/import_firebase.py.
@@ -123,7 +123,7 @@ def normalize_session(sid: str, s: Dict[str, Any]) -> Dict[str, Any]:
         "patient_source_id": s.get("patientId") or s.get("patient_id"),
         "doctor_source_id": s.get("doctorId"),
         "game_type": game_type,
-        "game_name": s.get("gameName") or GAME_NAMES.get(game_type, "RehabGame"),
+        "game_name": s.get("gameName") or GAME_NAMES.get(game_type, "Axis"),
         "score": int(_num(s.get("score"))),
         "duration_sec": _num(s.get("durationSec")),
         "level": int(_num(s.get("level"), 1)),

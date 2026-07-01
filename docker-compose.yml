@@ -1,6 +1,6 @@
 version: "3.9"
 
-# RehabGame — локальный стек
+# Axis — локальный стек
 # Запуск:        docker compose up
 # Только MongoDB: docker compose up mongo
 # Пересборка:    docker compose up --build
@@ -43,7 +43,7 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      DEMO_MODE: ${DEMO_MODE:-true}
+      DEMO_MODE: ${DEMO_MODE:-false}
     volumes:
       - ./api:/app
     healthcheck:

@@ -43,6 +43,12 @@ export default function Game3D() {
         game_type: data.gameType || 'game2',
         game_name: data.gameName || 'City Driver',
         imu_time_series: data.imuTimeSeries || [],
+        // Реакция на препятствия (если были угрозы на курсе) — для аналитики врача.
+        performance: (data.reactionMs != null || data.avoidanceRate != null) ? {
+          reactionMs: data.reactionMs,
+          avoidanceRate: data.avoidanceRate,
+          hazardCount: data.hazardCount,
+        } : undefined,
       });
       setLastSession(session);
       // replace: убираем экран игры из истории → «назад» из результата ведёт к выбору игр
@@ -79,15 +85,29 @@ export default function Game3D() {
     // Движок строит сцену и крутит рендер-луп, но геймплей НЕ стартует —
     // ждём кнопку «Начать» на экране GameIntro (игрок успевает подготовиться).
 
+    // Персональный диапазон управления из калибровки пациента: ребёнок с малым/асимметричным
+    // размахом (тяжёлый ДЦП) доводит машину до края на СВОЁМ максимуме. Диапазон движения —
+    // физический (общий для игр), его меряет 2-осевая калибровка (Calibration.jsx), которая
+    // сохраняется под game1 → берём метрики оттуда. Нет калибровки → глобальный дефолт (45°/35°).
+    api.getCalibrationStatus('game1').then((st) => {
+      const m = st?.baseline?.metrics;
+      if (m && engineRef.current) {
+        engineRef.current.setRange({
+          rollPos: m.rollMax, rollNeg: Math.abs(m.rollMin),
+          pitchPos: m.pitchMax, pitchNeg: Math.abs(m.pitchMin),
+        });
+      }
+    }).catch(() => {});
+
     // ROM-бар обновляем императивно (без re-render React каждый кадр)
     let raf;
     const romLoop = () => {
       const roll = engineRef.current?.state.roll ?? 0;
-      const norm = Math.max(-1, Math.min(1, roll / 45));
-      const a = Math.abs(roll);
+      const norm = engineRef.current?.state.steerNorm ?? 0;  // нормализовано по ПЕРСОНАЛЬНОМУ диапазону
+      const a = Math.abs(norm);
       if (romFillRef.current) {
         romFillRef.current.style.left = `calc(50% + ${norm * 50}% - 2px)`;
-        romFillRef.current.style.background = a > 25 ? '#22c55e' : a > 10 ? '#f59e0b' : '#ef4444';
+        romFillRef.current.style.background = a > 0.55 ? '#22c55e' : a > 0.25 ? '#f59e0b' : '#ef4444';
       }
       if (romLabelRef.current) romLabelRef.current.textContent = `Руль: ${roll.toFixed(1)}°`;
       // Скорость (ось pitch — газ/тормоз)
@@ -113,10 +133,13 @@ export default function Game3D() {
   // Подаём BLE-данные в движок
   useEffect(() => {
     const handler = (e) => {
-      const s = e.detail?.smooth;
-      if (s && engineRef.current) {
-        // smooth → управление; calib (несглаженный) → запись в ML-ряд (сохраняет тремор)
-        engineRef.current.updateInput(s.roll ?? 0, s.pitch ?? 0, s.yaw ?? 0, e.detail.calib);
+      const c = e.detail?.calib;
+      if (c && engineRef.current) {
+        // Управление — по КАЛИБРОВАННОМУ (несглаженному) углу; движок сам сглаживает ОДИН
+        // раз (EMA) и нормализует/клампит. Раньше сюда шёл smooth → двойное сглаживание
+        // (BleService + движок) давало лаг и ощущение «уплывающего нуля» при удержании макс.
+        // наклона. calib также идёт в ML-ряд (сохраняет тремор).
+        engineRef.current.updateInput(c.roll ?? 0, c.pitch ?? 0, c.yaw ?? 0, c);
       }
     };
     bleService.addEventListener('data', handler);

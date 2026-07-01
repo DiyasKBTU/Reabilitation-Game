@@ -1,5 +1,5 @@
 """
-Обучение моделей аномалий RehabGame — v2 (2026-06-03).
+Обучение моделей аномалий Axis — v2 (2026-06-03).
 
 Пайплайн:
   1. Загружаем данные: реальные (PAMAP2) + синтетика. Реальные в приоритете.
@@ -39,11 +39,15 @@ from .features import extract_features
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "anomaly_model.joblib")
 
+# Ядро из 6 клинически осмысленных признаков для модели (урезано с 14). Убраны дубли и
+# мусор: minAngle/maxAngle (их разницу несёт rom), meanAbsVelocity (коррелирует с peakVelocity),
+# meanJerk (из него считается smoothnessIndex), tremorIndex/tremorFreqHz (дублируют спектральный
+# tremorPower), repetitions (геймплей, не моторика) и мёртвый symmetryIndex (importance ~0.001).
+# features.py по-прежнему считает ВСЕ признаки — для показа врачу и правил-рекомендаций;
+# в МОДЕЛЬ идёт только это ядро. Асимметрия ловится отдельно в recommendations.detect_weak_side.
 FEATURE_KEYS = [
-    "rom", "minAngle", "maxAngle",
-    "peakVelocity", "meanAbsVelocity", "meanJerk",
-    "smoothnessIndex", "tremorIndex", "tremorFreqHz", "tremorPower",
-    "symmetryIndex", "pauseRatio", "repetitions", "activeTimeSec",
+    "rom", "peakVelocity", "smoothnessIndex",
+    "tremorPower", "pauseRatio", "activeTimeSec",
 ]
 
 
@@ -102,6 +106,28 @@ def load_dataset() -> Tuple[np.ndarray, np.ndarray, str]:
             print(f"[OK]Реальные данные: {len(real_series)} окон → {len(X_all)} векторов")
     except Exception as e:
         print(f"[WARN] Реальные данные недоступны ({e}), только синтетика.")
+
+    # ── Реальные движения запястья (Mendeley Smartwatch IMU) ──────────────
+    # Реальные сигналы (живой шум датчика, настоящая моторика) → класс «норма».
+    # HAR-датасет без меток нормы/аномалии, поэтому все сессии label=0.
+    # Если папки data/mendeley/ нет — тихо пропускаем.
+    try:
+        from data.mendeley_loader import load_mendeley_dataset  # type: ignore
+        men_series, men_labels, mstats = load_mendeley_dataset()
+        n_men = 0
+        for s, lbl in zip(men_series, men_labels):
+            v = _series_to_vector(s)
+            if v:
+                X_all.append(v)
+                y_all.append(lbl)
+                n_men += 1
+        if n_men:
+            sources.append(f"Mendeley запястье ({n_men} реальных сессий, норма)")
+            print(f"[OK] Реальные движения запястья (Mendeley): {n_men} сессий")
+        elif mstats.get("note"):
+            print(f"[WARN] Mendeley: {mstats['note']}")
+    except Exception as e:
+        print(f"[WARN] Mendeley-данные недоступны ({e}).")
 
     # ── Синтетика (всегда добавляем для устойчивости) ──────────────────────
     from data.synthetic import make_labeled_dataset  # type: ignore
@@ -180,7 +206,7 @@ def main():
 
     t0 = time.time()
     print("=" * 60)
-    print("RehabGame ML — Обучение модели аномалий v2")
+    print("Axis ML — Обучение модели аномалий v2")
     print("=" * 60)
 
     X, y, source = load_dataset()
@@ -260,7 +286,7 @@ def main():
     #   - validation="none", пока нет клинически размеченных данных.
     # ROC-AUC выше посчитан на синтетике (label = параметры генератора) и НЕ является
     # доказательством клинической точности — это указано в metrics_note.
-    has_real = ("PAMAP2" in source) or ("MongoDB" in source)
+    has_real = ("PAMAP2" in source) or ("MongoDB" in source) or ("Mendeley" in source)
     is_synthetic_only = not has_real
     # Реальные метки самочувствия пациента (боль/усталость) из приложения — это ground truth,
     # хоть и не клиническая валидация. Помечаем validation честно: "self-reported", если в

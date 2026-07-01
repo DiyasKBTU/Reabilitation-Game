@@ -1,5 +1,5 @@
 /**
- * packages/ble — BLE-сервис для RehabGame
+ * packages/ble — BLE-сервис для Axis
  *
  * Framework-agnostic ES-модуль. Никаких зависимостей от React/DOM кроме
  * Web Bluetooth API и EventTarget (встроены в браузер).

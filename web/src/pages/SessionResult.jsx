@@ -5,7 +5,7 @@ import useSessionStore from '../stores/sessionStore';
 import AnomalyBadge from '../components/AnomalyBadge';
 import Disclaimer from '../components/Disclaimer';
 import useAuthStore from '../stores/authStore';
-import { CheckCircleIcon, AlertTriangleIcon } from '../components/icons';
+import { CheckCircleIcon, AlertTriangleIcon, TargetIcon } from '../components/icons';
 
 // Оценка самочувствия = ground-truth метки для ML (норма/аномалия). pain=0 — «нет боли» (норма).
 const PAIN_OPTS = [
@@ -101,6 +101,22 @@ export default function SessionResult() {
         <Link to="/game" className="btn-secondary text-sm">← К играм</Link>
       </div>
 
+      {/* Калибровочная сессия — фиксация персональной стартовой точки */}
+      {session.is_calibration && (
+        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-4 flex items-start gap-3">
+          <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white shrink-0">
+            <TargetIcon size={20} />
+          </span>
+          <div>
+            <div className="font-semibold text-blue-900">Калибровка выполнена</div>
+            <p className="text-sm text-slate-600 mt-0.5">
+              Это ваша стартовая точка. Дальше прогресс будет считаться относительно неё —
+              играйте регулярно, чтобы увидеть динамику.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Score */}
       <div className="card p-6 mb-4 text-center">
         <div className="text-5xl font-bold text-blue-600 mb-1">{session.score}</div>
@@ -128,6 +144,13 @@ export default function SessionResult() {
           <MetricRow label="Паузы" value={(f.pauseRatio * 100).toFixed(0)} unit="%" />
           <MetricRow label="Повторений" value={f.repetitions} />
           <MetricRow label="Активное время" value={f.activeTimeSec} unit="с" />
+          {/* Реакция на препятствия (City Driver) — когнитивно-моторный навык. */}
+          {session.performance?.avoidanceRate != null && (
+            <MetricRow label="Уклонения от препятствий" value={(session.performance.avoidanceRate * 100).toFixed(0)} unit="%" />
+          )}
+          {session.performance?.reactionMs != null && (
+            <MetricRow label="Время реакции" value={(session.performance.reactionMs / 1000).toFixed(2)} unit="с" />
+          )}
         </div>
       )}
 
@@ -155,7 +178,10 @@ export default function SessionResult() {
       {saveState !== 'saved' && user?.role === 'patient' && (
         <div className="card p-4 mb-4">
           <h3 className="font-semibold text-slate-700 mb-1">Как вы себя чувствуете?</h3>
-          <p className="text-xs text-slate-400 mb-4">Помогает врачу и подбору нагрузки. Достаточно указать любой пункт.</p>
+          <p className="text-xs text-slate-400 mb-4">
+            По желанию. Если сохранить оценку — эта игра пойдёт в обучение модели (успешная
+            игра без боли = пример «нормы»). Без оценки игра просто сохранится в истории.
+          </p>
           <div className="space-y-4">
             <div>
               <span className="label">Боль</span>

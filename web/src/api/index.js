@@ -24,6 +24,7 @@ export const api = {
 
   // Auth
   register: (data) => apiFetch('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  registerDoctor: (data) => apiFetch('/auth/register-doctor', { method: 'POST', body: JSON.stringify(data) }),
   login: (data) => apiFetch('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
   me: () => apiFetch('/auth/me'),
 
@@ -40,7 +41,12 @@ export const api = {
   createSession: (data) => apiFetch('/sessions', { method: 'POST', body: JSON.stringify(data) }),
   getSessions: (params = {}) => apiFetch('/sessions?' + new URLSearchParams(params)),
   getSession: (id) => apiFetch(`/sessions/${id}`),
+  // Сырой ряд движения сессии (угол во времени) для графика траектории
+  getSessionTrace: (id) => apiFetch(`/sessions/${id}/trace`),
   labelSession: (id, data) => apiFetch(`/sessions/${id}/label`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // Калибровка: откалиброван ли пациент в игре (есть ли персональный baseline)
+  getCalibrationStatus: (gameType = 'game1', patientId) =>
+    apiFetch('/sessions/calibration/status?' + new URLSearchParams({ game_type: gameType, ...(patientId ? { patient_id: patientId } : {}) })),
 
   // Insights
   getInsights: (patientId, gameType = 'game1') => apiFetch(`/insights/${patientId}?game_type=${gameType}`),
@@ -56,4 +62,10 @@ export const api = {
   getUsers: () => apiFetch('/admin/users'),
   updateUser: (id, data) => apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteUser: (id) => apiFetch(`/admin/users/${id}`, { method: 'DELETE' }),
+  getDoctorInvites: () => apiFetch('/admin/doctor-invites'),
+  createDoctorInvite: () => apiFetch('/admin/doctor-invites', { method: 'POST' }),
+  deleteDoctorInvite: (id) => apiFetch(`/admin/doctor-invites/${id}`, { method: 'DELETE' }),
+  // Тестовые пользователи (создаются админом для проверки/игры, изолированы от реальных)
+  createTestUser: (data = {}) => apiFetch('/admin/test-users', { method: 'POST', body: JSON.stringify(data) }),
+  deleteTestUser: (id) => apiFetch(`/admin/test-users/${id}`, { method: 'DELETE' }),
 };

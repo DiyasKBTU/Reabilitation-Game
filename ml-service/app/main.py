@@ -1,5 +1,5 @@
 """
-RehabGame ML-service — FastAPI.
+Axis ML-service — FastAPI.
 
 Независимый микросервис: принимает признаки/сырой IMU-ряд, возвращает
 признаки, сигнал аномалии и рекомендации по слабой стороне. Node-бэкенд
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="RehabGame ML-service", version=__version__, lifespan=lifespan)
+app = FastAPI(title="Axis ML-service", version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

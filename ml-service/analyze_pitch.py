@@ -23,12 +23,12 @@ from data import synthetic as syn          # noqa: E402
 from app.features import extract_features   # noqa: E402
 
 PROFILES = {
-    "normal":      syn._normal_session,
-    "borderline":  syn._borderline_session,
-    "fatigue":     syn._fatigue_session,
-    "pain":        syn._pain_session,
-    "tremor":      syn._tremor_session,
-    "asymmetry":   syn._asymmetry_session,
+    "normal":       syn._normal_session,
+    "borderline":   syn._borderline_session,
+    "spastic":      syn._spastic_session,
+    "hemiparesis":  syn._hemiparesis_session,
+    "dyskinetic":   syn._dyskinetic_session,
+    "ataxic":       syn._ataxic_session,
 }
 KEYS = ["rom", "peakVelocity", "smoothnessIndex", "tremorIndex",
         "symmetryIndex", "pauseRatio", "repetitions", "activeTimeSec"]

@@ -2,17 +2,22 @@
 Генератор синтетических IMU-сессий — «тёплый старт» до накопления
 реальных данных. НЕ заменяет реальные данные пациентов.
 
-v2 (2026-06-03): добавлены клинически реалистичные профили:
-  - Прогрессирующее улучшение (реабилитационный тренд)
-  - Острая усталость (ROM падает к концу сессии)
-  - Тремор покоя (Паркинсон/неврология)
-  - Сильная асимметрия (постинсультный паттерн)
-  - Сверхнормальные «спортивные» сессии (граница нормы)
+v3 (2026-06-25): ретаргет на ДЦП (детский церебральный паралич). Профили аномалий
+переписаны под формы ДЦП вместо инсульт/Паркинсон:
+  - Спастическая форма (повышенный тонус: малый ROM, рывковость, замедленность)
+  - Гемипарез (односторонняя слабость → выраженная асимметрия)
+  - Дискинетическая форма (непроизвольные медленные колебания, переменная амплитуда)
+  - Атаксическая форма (нарушение координации, интенционный тремор, низкая плавность)
+Нормальные/пограничные профили сохранены (типично развивающийся ребёнок).
 
-Параметры моделируют наблюдения из литературы:
-  - Krakauer 2006: ROM post-stroke часто < 30° в первые недели
-  - Shumway-Cook 2007: тремор покоя ≥ 4 Гц, амплитуда 2–8°
-  - Gladstone 2002: асимметрия > 40% — клинически значимый маркер
+Параметры качественно моделируют известные характеристики моторики при ДЦП
+(не точные клинические значения — синтетика для «тёплого старта», не для валидации):
+  - Спастика: гипертонус → уменьшенная амплитуда и скорость, прерывистость движения
+  - Гемипарез: одна сторона существенно ограничена → асимметрия > 40%
+  - Дискинезия: атетоидные/хореиформные колебания, низкая частота (~1.5–3.5 Гц), вариативность
+  - Атаксия: дисметрия и интенционный тремор (~3–5 Гц), плохая плавность, промахи мимо цели
+
+v2 (2026-06-03): первые клинические профили (инсульт/Паркинсон) — заменены в v3.
 """
 
 from __future__ import annotations
@@ -101,57 +106,73 @@ def _normal_session(rng: random.Random) -> List[Dict]:
     )
 
 
-def _fatigue_session(rng: random.Random) -> List[Dict]:
-    """Сессия с нарастающей усталостью — ROM падает к концу."""
-    return make_session(
-        rom=rng.uniform(25, 45),
-        smooth=rng.uniform(0.55, 0.78),
-        tremor=rng.uniform(0.1, 0.3),
-        tremor_freq_hz=rng.uniform(4.0, 7.0),
-        pause_frac=rng.uniform(0.25, 0.45),
-        fatigue_decay=rng.uniform(0.5, 0.9),
-        noise_sd=rng.uniform(0.5, 1.2),
-        seed=rng.randint(0, 10**7),
-    )
+def _spastic_session(rng: random.Random) -> List[Dict]:
+    """Спастическая форма ДЦП — гипертонус: малый ROM, рывковость, замедленность.
 
-
-def _pain_session(rng: random.Random) -> List[Dict]:
-    """Сессия с болью — маленький ROM, много пауз, щажение."""
+    Повышенный мышечный тонус ограничивает амплитуду и скорость, движение прерывистое
+    (низкая плавность), нередко с лёгкой асимметрией поражённой стороны.
+    """
     return make_session(
-        rom=rng.uniform(8, 22),
-        smooth=rng.uniform(0.35, 0.60),
+        rom=rng.uniform(12, 32),
+        freq_hz=rng.uniform(0.25, 0.45),     # замедленное движение
+        smooth=rng.uniform(0.30, 0.55),      # рывковость из-за гипертонуса
         tremor=rng.uniform(0.05, 0.20),
-        asymmetry=rng.uniform(0.25, 0.55),
-        pause_frac=rng.uniform(0.35, 0.60),
-        fatigue_decay=rng.uniform(0.2, 0.6),
+        asymmetry=rng.uniform(0.15, 0.45),
+        pause_frac=rng.uniform(0.20, 0.45),
+        fatigue_decay=rng.uniform(0.1, 0.4),
         noise_sd=rng.uniform(0.4, 1.0),
         seed=rng.randint(0, 10**7),
     )
 
 
-def _tremor_session(rng: random.Random) -> List[Dict]:
-    """Неврологический тремор покоя (постинсульт / Паркинсон)."""
+def _hemiparesis_session(rng: random.Random) -> List[Dict]:
+    """Гемипарез — односторонняя слабость: выраженная асимметрия движения."""
     return make_session(
-        rom=rng.uniform(20, 40),
-        smooth=rng.uniform(0.25, 0.50),
-        tremor=rng.uniform(0.55, 0.90),
-        tremor_freq_hz=rng.uniform(4.0, 8.0),  # клиническая частота тремора
-        asymmetry=rng.uniform(0.1, 0.4),
-        pause_frac=rng.uniform(0.1, 0.3),
-        noise_sd=rng.uniform(0.5, 1.5),
+        rom=rng.uniform(20, 45),
+        freq_hz=rng.uniform(0.35, 0.55),
+        smooth=rng.uniform(0.55, 0.82),
+        tremor=rng.uniform(0.05, 0.22),
+        asymmetry=rng.uniform(0.45, 0.75),   # одна сторона существенно ограничена
+        pause_frac=rng.uniform(0.10, 0.30),
+        noise_sd=rng.uniform(0.3, 0.9),
         seed=rng.randint(0, 10**7),
     )
 
 
-def _asymmetry_session(rng: random.Random) -> List[Dict]:
-    """Постинсультная асимметрия — значительное ограничение в одну сторону."""
+def _dyskinetic_session(rng: random.Random) -> List[Dict]:
+    """Дискинетическая форма — непроизвольные медленные колебания (атетоз/хорея).
+
+    Колеблющийся тонус → переменная амплитуда, низкочастотные непроизвольные движения
+    (~1.5–3.5 Гц), плохая плавность и высокая вариативность.
+    """
     return make_session(
-        rom=rng.uniform(25, 50),
-        smooth=rng.uniform(0.60, 0.85),
-        tremor=rng.uniform(0.05, 0.25),
-        asymmetry=rng.uniform(0.42, 0.70),   # > 40% — клинически значимо
+        rom=rng.uniform(25, 55),
+        freq_hz=rng.uniform(0.30, 0.55),
+        smooth=rng.uniform(0.25, 0.50),
+        tremor=rng.uniform(0.40, 0.75),
+        tremor_freq_hz=rng.uniform(1.5, 3.5),  # медленные атетоидные колебания
+        asymmetry=rng.uniform(0.10, 0.40),
         pause_frac=rng.uniform(0.10, 0.30),
-        noise_sd=rng.uniform(0.3, 0.9),
+        noise_sd=rng.uniform(0.6, 1.6),         # высокая вариативность
+        seed=rng.randint(0, 10**7),
+    )
+
+
+def _ataxic_session(rng: random.Random) -> List[Dict]:
+    """Атаксическая форма — нарушение координации: интенционный тремор, дисметрия.
+
+    Плохая координация → промахи мимо цели (переменная амплитуда), интенционный тремор
+    (~3–5 Гц), низкая плавность движения.
+    """
+    return make_session(
+        rom=rng.uniform(30, 55),
+        freq_hz=rng.uniform(0.35, 0.55),
+        smooth=rng.uniform(0.30, 0.55),
+        tremor=rng.uniform(0.40, 0.70),
+        tremor_freq_hz=rng.uniform(3.0, 5.0),   # интенционный тремор
+        asymmetry=rng.uniform(0.05, 0.30),
+        pause_frac=rng.uniform(0.10, 0.30),
+        noise_sd=rng.uniform(0.5, 1.3),
         seed=rng.randint(0, 10**7),
     )
 
@@ -180,10 +201,10 @@ def make_labeled_dataset(
     """
     Возвращает список (imuTimeSeries, label):
       label=0 — норма
-      label=1 — аномалия (усталость / боль / тремор / асимметрия)
+      label=1 — аномалия (спастика / гемипарез / дискинезия / атаксия)
 
     Нормальные: ~70% хорошие + 30% пограничные (чтобы модель не переоптимизировалась).
-    Аномальные: равномерно из 4 клинических профилей.
+    Аномальные: равномерно из 4 форм ДЦП.
     """
     rng = random.Random(seed)
     data: List[Tuple[List[Dict], int]] = []
@@ -196,8 +217,8 @@ def make_labeled_dataset(
     for _ in range(n_borderline):
         data.append((_borderline_session(rng), 0))
 
-    # Аномальные сессии (4 профиля)
-    profile_fns = [_fatigue_session, _pain_session, _tremor_session, _asymmetry_session]
+    # Аномальные сессии (4 формы ДЦП)
+    profile_fns = [_spastic_session, _hemiparesis_session, _dyskinetic_session, _ataxic_session]
     per_profile = n_abnormal // len(profile_fns)
     remainder   = n_abnormal % len(profile_fns)
     for fn in profile_fns:

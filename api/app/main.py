@@ -7,6 +7,7 @@ from .database import connect_db, close_db
 from .routes import auth, patients, sessions, insights, leaderboard, profile, admin
 from .ml.router import router as ml_router
 from .ml.anomaly import preload_model
+from .ml.pattern import preload_model as preload_pattern_model
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
         )
     await connect_db()
     preload_model()
+    preload_pattern_model()
     await _seed_admin()
     if settings.demo_mode:
         from .demo import seed_demo
@@ -47,7 +49,7 @@ async def _seed_admin():
 
 
 app = FastAPI(
-    title="RehabGame API",
+    title="Axis API",
     version=settings.version,
     lifespan=lifespan,
 )
@@ -73,11 +75,14 @@ app.include_router(ml_router, prefix="/api")
 @app.get("/api/health")
 async def health():
     from .ml.anomaly import _load_model
+    from .ml.pattern import _load_model as _load_pattern
     model = _load_model()
+    pattern_model = _load_pattern()
     return {
         "status": "ok",
         "version": settings.version,
         "anomaly_mode": "ml" if model else "rule",
         "model_version": model.get("model_version") if model else None,
+        "pattern_model": pattern_model.get("model_version") if pattern_model else None,
         "demo_mode": settings.demo_mode,
     }

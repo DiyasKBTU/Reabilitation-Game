@@ -1,8 +1,10 @@
+import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from beanie import PydanticObjectId
 from ..models.user import User
 from ..models.patient import Patient
 from ..auth.deps import get_current_user, require_doctor, verify_patient_access
+from ..auth.password import hash_password
 from ..schemas.patient import PatientOut, PatientCreate, PatientUpdate
 from typing import List
 
@@ -16,8 +18,10 @@ def _out(p: Patient) -> PatientOut:
         diagnosis=p.diagnosis,
         age=p.age,
         gender=p.gender,
+        iin=p.iin,
         user_id=str(p.user_id) if p.user_id else None,
         doctor_id=str(p.doctor_id) if p.doctor_id else None,
+        is_test=p.is_test,
         created_at=p.created_at,
     )
 
@@ -36,16 +40,36 @@ async def list_patients(user: User = Depends(get_current_user)):
 
 @router.post("", response_model=PatientOut, status_code=201)
 async def create_patient(body: PatientCreate, user: User = Depends(require_doctor)):
+    iin = (body.iin or "").strip()
+    user_id = PydanticObjectId(body.user_id) if body.user_id else None
+    pin = None
+
+    # Онбординг с входом: врач заводит ребёнку учётку (играть самому). Логин = ИИН (12 цифр),
+    # ПИН авто-генерируется (врач может задать свой) и возвращается ОДИН раз — отдать родителю.
+    if body.create_login:
+        if not (iin.isdigit() and len(iin) == 12):
+            raise HTTPException(400, "Для входа нужен ИИН из 12 цифр")
+        if await User.find_one(User.username == iin):
+            raise HTTPException(400, "Пациент с таким ИИН уже зарегистрирован")
+        pin = (body.pin or "").strip() or f"{secrets.randbelow(900000) + 100000}"  # 6-значный ПИН
+        acct = User(username=iin, email=f"{iin}@patient.local",
+                    password_hash=hash_password(pin), role="patient", consent=True)
+        await acct.insert()
+        user_id = acct.id
+
     patient = Patient(
         full_name=body.full_name,
         diagnosis=body.diagnosis,
         age=body.age,
         gender=body.gender,
-        user_id=PydanticObjectId(body.user_id) if body.user_id else None,
+        iin=iin or None,
+        user_id=user_id,
         doctor_id=user.id if user.role == "doctor" else None,
     )
     await patient.insert()
-    return _out(patient)
+    out = _out(patient)
+    out.pin = pin   # только в ответе на создание; нигде не хранится
+    return out
 
 
 # ВАЖНО: маршрут /unattached объявлен ДО /{pid}, иначе "unattached" попадёт в {pid}.
