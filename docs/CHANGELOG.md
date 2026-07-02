@@ -2,6 +2,29 @@
 
 ---
 
+## Production-деплой под слабый VPS (1 ГБ RAM) (2026-07-02)
+
+> Разбор инцидента 2026-07-01: dev-стек уронил сервер 960 МБ без swap — OOM-killer
+> убил uvicorn и mongosh (healthcheck!), хост завис.
+
+- **`docker-compose.prod.yml` (новый)** — прод-стек для сервера: статический фронт
+  через nginx (~5 МБ вместо Vite dev-сервера), `mem_limit` на всех сервисах
+  (mongo 384M / api 300M / web 32M), `oom_score_adj` — при нехватке памяти ядро
+  убивает наши контейнеры, а не соседний проект; mongo/api наружу не публикуются,
+  только nginx (`WEB_PORT`, по умолчанию 8080), `/api` проксируется same-origin.
+- **`web/Dockerfile` + `web/nginx.conf` (новые)** — многоступенчатая сборка
+  (node:20-alpine build → nginx:alpine), контекст — корень репо (нужен `packages/`),
+  SPA-fallback, gzip, кэш `/assets/`. Корневой `.dockerignore` режет контекст.
+- **Healthcheck'и переделаны (dev + prod)**: mongo — TCP-проверка через bash вместо
+  mongosh (тот поднимал Node-процесс ~140 МБ на каждый пинг — его и убивал OOM);
+  api — python urllib вместо curl (curl в python:slim нет, проверка всегда падала).
+- **api: BLAS/OpenMP в 1 поток** (`OPENBLAS_NUM_THREADS` и др.) — меньше памяти
+  numpy/sklearn; `api/.dockerignore` — `.env` и кэши не попадают в образ.
+- **`docs/DEPLOY.md` переписан** под prod-компоуз: обязательный swap 2G (шаг 0),
+  `.env` c `JWT_SECRET` (обязателен), `WEB_PORT`, бюджет памяти, диагностика OOM.
+
+---
+
 ## Честная аналитика (качество данных) + ревью и консолидация доков (2026-06-30)
 
 > Сборка фронта зелёная, vitest 4 ✓, api 20 ✓, паритет 10 ✓.

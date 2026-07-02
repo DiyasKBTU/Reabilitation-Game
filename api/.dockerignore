@@ -1,0 +1,6 @@
+# Не тащить в образ секреты и кэши (COPY . . в api/Dockerfile)
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/

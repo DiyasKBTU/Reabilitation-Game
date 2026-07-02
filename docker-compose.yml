@@ -1,4 +1,5 @@
-# Axis — локальный стек
+# Axis — ЛОКАЛЬНЫЙ dev-стек (Vite dev-сервер, hot reload).
+# На сервер НЕ деплоить этим файлом — использовать docker-compose.prod.yml (см. docs/DEPLOY.md).
 # Запуск:        docker compose up
 # Только MongoDB: docker compose up mongo
 # Пересборка:    docker compose up --build
@@ -10,16 +11,20 @@ services:
     image: mongo:7.0
     container_name: rehabgame-mongo
     restart: unless-stopped
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 350m
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
     environment:
       MONGO_INITDB_DATABASE: rehabgame
+    # НЕ mongosh: он поднимает Node-процесс ~140 МБ на каждый пинг (OOM на слабом хосте).
+    # Дешёвая проверка TCP-порта средствами bash (есть в образе mongo).
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/27017"]
       interval: 15s
-      timeout: 15s
+      timeout: 5s
       retries: 10
       start_period: 40s
 
@@ -30,6 +35,7 @@ services:
       dockerfile: Dockerfile
     container_name: rehabgame-api
     restart: unless-stopped
+    mem_limit: 400m
     ports:
       - "8000:8000"
     depends_on:
@@ -43,12 +49,17 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       DEMO_MODE: ${DEMO_MODE:-false}
+      # BLAS/OpenMP в 1 поток — меньше памяти numpy/sklearn
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     volumes:
       - ./api:/app
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      # curl в python:slim отсутствует — проверяем стандартной библиотекой
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
       interval: 15s
-      timeout: 5s
+      timeout: 10s
       retries: 3
 
   # ── Frontend (Vite dev, production use nginx) ─────────────────────────────
@@ -57,6 +68,7 @@ services:
     container_name: rehabgame-web
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host"
+    mem_limit: 300m
     ports:
       - "5173:5173"
     environment:

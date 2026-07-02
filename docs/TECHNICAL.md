@@ -337,13 +337,21 @@ created_at: datetime
 
 ## 7. Запуск
 
-### Docker (рекомендуется)
+### Docker (рекомендуется, локальная разработка)
 ```bash
 docker compose up
 # Frontend: http://localhost:5173
 # API:      http://localhost:8000
 # Docs:     http://localhost:8000/docs
 ```
+
+### Docker (production, слабый VPS ~1 ГБ RAM)
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+# Всё через nginx: http://<сервер>:8080 (порт — WEB_PORT в .env)
+```
+Статическая сборка фронта + nginx, лимиты памяти, mongo/api наружу не публикуются.
+Перед первым запуском включить swap — полная инструкция в `docs/DEPLOY.md`.
 
 ### Вручную (dev)
 ```powershell

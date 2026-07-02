@@ -1,0 +1,88 @@
+# Axis — production-стек для слабого VPS (~1 ГБ RAM, рядом живут чужие контейнеры).
+# ПЕРЕД первым запуском на сервере ОБЯЗАТЕЛЬНО включить swap — см. docs/DEPLOY.md.
+#
+# Запуск:     docker compose -f docker-compose.prod.yml up -d --build
+# Логи:       docker compose -f docker-compose.prod.yml logs -f
+# Остановка:  docker compose -f docker-compose.prod.yml down
+#
+# Бюджет памяти (жёсткие лимиты): mongo 384M + api 300M + web 32M ≤ 716M максимум,
+# в норме стек держится в ~350–450M. Наружу открыт только nginx (порт WEB_PORT).
+# oom_score_adj > 0 — при нехватке памяти на хосте ядро убьёт наши контейнеры,
+# а не соседний проект.
+
+services:
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: rehabgame-mongo
+    restart: unless-stopped
+    # Кэш WiredTiger 256 МБ (минимум) — иначе mongod возьмёт ~50% RAM хоста
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 384m
+    oom_score_adj: 200
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: rehabgame
+    # НЕ mongosh: он поднимает Node-процесс ~140 МБ на каждый пинг — ловили OOM.
+    # Дешёвая проверка TCP-порта средствами bash (есть в образе mongo).
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/27017"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: rehabgame-api
+    restart: unless-stopped
+    mem_limit: 300m
+    oom_score_adj: 300
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://mongo:27017/rehabgame
+      JWT_SECRET: ${JWT_SECRET:?Задайте JWT_SECRET в .env рядом с compose-файлом (мин. 32 символа)}
+      # nginx проксирует /api same-origin, CORS почти не нужен; укажите реальный адрес
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      # BLAS/OpenMP в 1 поток: numpy/sklearn на малом VPS иначе плодят
+      # пер-поточные буферы — лишние потоки и память
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      MALLOC_ARENA_MAX: "2"
+    healthcheck:
+      # curl в python:slim отсутствует — проверяем стандартной библиотекой
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── Frontend (nginx со статической сборкой Vite) ─────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: rehabgame-web
+    restart: unless-stopped
+    mem_limit: 32m
+    oom_score_adj: 100
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  mongo_data:
+    driver: local

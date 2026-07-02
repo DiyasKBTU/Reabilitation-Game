@@ -1,0 +1,7 @@
+# Контекст сборки web-образа — корень репозитория (web/Dockerfile).
+# В контексте нужны только web/ и packages/, остальное отсекаем.
+*
+!web
+!packages
+web/node_modules
+web/dist
