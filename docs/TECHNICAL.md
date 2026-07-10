@@ -352,6 +352,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 Статическая сборка фронта + nginx, лимиты памяти, mongo/api наружу не публикуются.
 Перед первым запуском включить swap — полная инструкция в `docs/DEPLOY.md`.
+Для подключения устройства (Web Bluetooth) нужен HTTPS: временно — Cloudflare Tunnel
+(`--profile tunnel`), постоянно — свой домен + Let's Encrypt (`docker-compose.tls.yml`).
+См. `docs/DEPLOY.md`, раздел 7.
 
 ### Вручную (dev)
 ```powershell

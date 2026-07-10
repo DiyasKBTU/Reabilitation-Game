@@ -1,0 +1,47 @@
+# Axis — HTTPS через СВОЙ домен + Let's Encrypt (Caddy). ЗАГОТОВКА НА БУДУЩЕЕ.
+# Пока не активен: обычный prod-стек его не подхватывает. Включается вторым -f,
+# когда появится домен, указывающий A-записью на IP этого сервера.
+#
+# Отличие от Cloudflare Tunnel: постоянный красивый адрес, доверенный сертификат
+# без предупреждений, трафик НЕ идёт через третью сторону — только твой сервер.
+#
+# Как активировать (когда будет домен):
+#   1. Купить/завести домен (можно бесплатно, DuckDNS) и создать A-запись на IP.
+#   2. В .env (рядом с compose) добавить строку:  DOMAIN=axis.example.com
+#   3. Открыть порт 443:  sudo ufw allow 443/tcp
+#      (порт 80 тут занят host-nginx соседнего проекта; Caddy берёт только 443,
+#       сертификат через TLS-ALPN-01 — порт 80 не нужен)
+#   4. Запустить (БЕЗ --profile tunnel — туннель больше не нужен):
+#        docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml up -d
+#      Если туннель был запущен — остановить: docker compose ... stop cloudflared
+#   Caddy сам получит и будет автоматически продлевать сертификат Let's Encrypt.
+#
+# Caddy стоит ПЕРЕД web (nginx): терминирует TLS на 443 и проксирует весь трафик
+# (SPA + /api) на web:80. Порт web (8080) снаружи можно закрыть в файрволе —
+# наружу смотрит только Caddy.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: rehabgame-caddy
+    restart: unless-stopped
+    mem_limit: 64m
+    oom_score_adj: 150
+    ports:
+      # На этом сервере порт 80 уже держит host-nginx соседнего проекта, поэтому
+      # публикуем ТОЛЬКО свободный 443. Сертификат Caddy выпустит через TLS-ALPN-01
+      # (валидация Let's Encrypt по 443), порт 80 не требуется.
+      # Если на другом сервере 80 свободен — можно добавить "80:80" для http→https редиректа.
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # сертификаты — переживают пересоздание контейнера
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?Задайте DOMAIN в .env (напр. axis.example.com) с A-записью на IP сервера}
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

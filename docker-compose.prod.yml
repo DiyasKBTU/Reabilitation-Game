@@ -83,6 +83,30 @@ services:
     depends_on:
       - api
 
+  # ── Cloudflare Tunnel (временный публичный HTTPS без домена) ──────────────────
+  # Зачем: Web Bluetooth (подключение ESP32) в браузере работает ТОЛЬКО по https
+  # или на localhost. По http://<IP>:8080 navigator.bluetooth недоступен.
+  # cloudflared делает исходящее соединение к Cloudflare и выдаёт публичный адрес
+  # вида https://<random>.trycloudflare.com → проксирует на web:80 (тот же nginx).
+  # Домен/сертификат/открытые порты не нужны. URL смотреть в логах контейнера.
+  #
+  # Профиль "tunnel" — сервис поднимается ТОЛЬКО с флагом --profile tunnel, чтобы
+  # публичный доступ включался осознанно (данные пациентов). Запуск и получение URL:
+  #   docker compose -f docker-compose.prod.yml --profile tunnel up -d
+  #   docker compose -f docker-compose.prod.yml logs cloudflared | grep trycloudflare
+  # URL меняется при каждом рестарте контейнера (для постоянного нужен домен, см. tls).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: rehabgame-tunnel
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate --url http://web:80
+    mem_limit: 96m
+    # Убить первым при нехватке памяти (важнее сохранить mongo/api/соседний проект)
+    oom_score_adj: 500
+    depends_on:
+      - web
+
 volumes:
   mongo_data:
     driver: local
