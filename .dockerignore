@@ -1,7 +1,9 @@
 # Контекст сборки web-образа — корень репозитория (web/Dockerfile).
-# В контексте нужны только web/ и packages/, остальное отсекаем.
+# В контексте нужны только web/, packages/ и tools/ (статические страницы
+# imu-recorder/imu-simulator раздаются nginx по /tools/), остальное отсекаем.
 *
 !web
 !packages
+!tools
 web/node_modules
 web/dist

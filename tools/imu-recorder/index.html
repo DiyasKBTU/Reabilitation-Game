@@ -309,13 +309,34 @@ function showStats() {
   const rom = max - min;
   const dur = recordBuffer.length > 0 ? (recordBuffer[recordBuffer.length-1].t/1000).toFixed(1) : 0;
 
+  // Качество тайминга устройства: t — время ПРИХОДА пакета в браузер, поэтому джиттер/провалы
+  // здесь показывают рваность BLE-доставки. Прошивка должна дать равномерный поток (или
+  // слать device-время) — по этим строкам видно, починилось ли: медианный dt стабильный,
+  // провалов >100 мс нет. Замер 2026-07-13: медиана 3 мс (пачки), 12 провалов, max 1081 мс.
+  let timingRows = "";
+  if (recordBuffer.length > 2) {
+    const dts = [];
+    for (let i = 1; i < recordBuffer.length; i++) dts.push(recordBuffer[i].t - recordBuffer[i-1].t);
+    const sorted = [...dts].sort((a,b) => a-b);
+    const median = sorted[Math.floor(sorted.length/2)];
+    const durSec = (recordBuffer[recordBuffer.length-1].t - recordBuffer[0].t) / 1000;
+    const hz = durSec > 0 ? (dts.length / durSec) : 0;
+    const gaps = dts.filter(d => d > 100);
+    const maxGap = Math.max(...dts);
+    const gapStyle = gaps.length ? 'style="color:#f87171"' : 'style="color:#4ade80"';
+    timingRows = `
+    <div class="row"><span>Частота (средняя)</span><span class="row-val">${hz.toFixed(1)} Гц</span></div>
+    <div class="row"><span>Медианный dt</span><span class="row-val">${median.toFixed(0)} мс</span></div>
+    <div class="row"><span>Провалы &gt;100 мс</span><span class="row-val" ${gapStyle}>${gaps.length} (max ${maxGap.toFixed(0)} мс)</span></div>`;
+  }
+
   document.getElementById("stats-content").innerHTML = `
     <div class="row"><span>Точек</span><span class="row-val">${recordBuffer.length}</span></div>
     <div class="row"><span>Длительность</span><span class="row-val">${dur}с</span></div>
     <div class="row"><span>ROM (roll)</span><span class="row-val">${rom.toFixed(1)}°</span></div>
     <div class="row"><span>Min roll</span><span class="row-val">${min.toFixed(1)}°</span></div>
     <div class="row"><span>Max roll</span><span class="row-val">${max.toFixed(1)}°</span></div>
-    <div class="row"><span>Средний roll</span><span class="row-val">${(rolls.reduce((a,b)=>a+b,0)/rolls.length).toFixed(1)}°</span></div>
+    <div class="row"><span>Средний roll</span><span class="row-val">${(rolls.reduce((a,b)=>a+b,0)/rolls.length).toFixed(1)}°</span></div>${timingRows}
   `;
   document.getElementById("stats-card").style.display = "block";
 }
