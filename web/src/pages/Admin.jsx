@@ -59,10 +59,36 @@ export default function Admin() {
     }
   }
 
-  function copyCode(code) {
-    navigator.clipboard?.writeText(code);
-    setCopied(code);
-    setTimeout(() => setCopied(''), 1500);
+  async function copyCode(code) {
+    // navigator.clipboard есть только в защищённом контексте (https/localhost). По http://<IP>
+    // он undefined → раньше кнопка показывала «Скопировано», а буфер оставался пустым.
+    // Фолбэк через execCommand работает и без https; последний резерв — показать код для ручного копирования.
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      }
+    } catch { /* упадём в фолбэк ниже */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch { ok = false; }
+    }
+    if (ok) {
+      setCopied(code);
+      setTimeout(() => setCopied(''), 1500);
+    } else {
+      window.prompt('Скопируйте код вручную (Ctrl+C, Enter):', code);
+    }
   }
 
   async function toggleAccess(uid, field, current) {
