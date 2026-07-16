@@ -40,12 +40,15 @@ async def ensure_baseline(patient: Patient, game_type: str) -> Optional[Dict[str
         return baselines[game_type]
 
     # Самая ранняя АНАЛИТИЧЕСКИ ПРИГОДНАЯ сессия = персональная точка отсчёта.
+    # Сессии с клавиатуры/без входа (input_source не датчик) пропускаем: их ряд углов
+    # синтезирован и точкой отсчёта реального движения быть не может. None = старый клиент.
     sessions = (
         await Session.find({"patient_id": patient.id, "game_type": game_type})
         .sort("+created_at")
         .to_list()
     )
-    cal = next((s for s in sessions if is_analyzable(s.features)), None)
+    cal = next((s for s in sessions
+                if is_analyzable(s.features) and s.input_source in (None, "ble")), None)
     if cal is None:
         return None
 

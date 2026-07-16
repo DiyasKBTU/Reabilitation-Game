@@ -1,11 +1,22 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from .features import extract_features
 from .anomaly import detect_anomalies, preload_model, _load_model
 from .recommendations import build_recommendations
+from ..auth.deps import get_current_user
+from ..schemas.session import MAX_IMU_SAMPLES
 
+# Вычислительные эндпоинты — только для вошедших: без авторизации любой аноним мог
+# гонять извлечение признаков на произвольно больших массивах (DoS для VPS 1 ГБ).
+# /ml/health остаётся открытым (лёгкий, без вычислений).
 router = APIRouter(prefix="/ml", tags=["ml"])
+_authed = [Depends(get_current_user)]
+
+
+def _check_len(series):
+    if series and len(series) > MAX_IMU_SAMPLES:
+        raise HTTPException(422, f"Слишком длинный ряд IMU: максимум {MAX_IMU_SAMPLES} сэмплов")
 
 
 class FeaturesRequest(BaseModel):
@@ -21,13 +32,15 @@ class PredictRequest(BaseModel):
     axis: str = "r"
 
 
-@router.post("/features")
+@router.post("/features", dependencies=_authed)
 async def compute_features(body: FeaturesRequest):
+    _check_len(body.imuTimeSeries)
     return extract_features(body.imuTimeSeries, body.axis)
 
 
-@router.post("/predict")
+@router.post("/predict", dependencies=_authed)
 async def predict(body: PredictRequest):
+    _check_len(body.imuTimeSeries)
     if body.features:
         features = body.features
     elif body.imuTimeSeries:

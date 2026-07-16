@@ -76,11 +76,15 @@ def load_mongo_dataset(axis: str = "r") -> Tuple[List[List[Dict]], List[int], Di
     labels: List[int] = []
     try:
         coll = client[db_name]["sessions"]
-        # Берём ВСЕ сессии: критерий попадания в обучение — наличие ОСОЗНАННОЙ метки
-        # самочувствия (label), а НЕ источник. Сессия идёт в датасет, только если игрок выбрал
-        # сохранить оценку (label есть → label_from_session даёт y). Тест-аккаунты тоже дают
-        # валидные данные (успешные прохождения = «норма»). Сид-данные без label отсеются ниже.
-        for doc in coll.find({}, {"imu_time_series": 1, "label": 1, "source": 1}):
+        # Критерий попадания в обучение — наличие ОСОЗНАННОЙ метки самочувствия (label →
+        # label_from_session даёт y). Тест-аккаунты тоже дают валидные данные (успешные
+        # прохождения = «норма»); сид-данные без label отсеются ниже.
+        # Гард источника (зеркало TRUSTED_INPUT в api/routes/sessions.py): только датчик
+        # (ble) или старый клиент без поля (None — $in матчит и отсутствующее поле).
+        # Клавиатурный ряд синтезирован игрой — ему в обучении делать нечего, даже если
+        # метка вдруг есть (веб их не собирает, но старый/сторонний клиент мог прислать).
+        query = {"input_source": {"$in": [None, "ble"]}}
+        for doc in coll.find(query, {"imu_time_series": 1, "label": 1, "source": 1}):
             ser = doc.get("imu_time_series") or []
             if len(ser) < MIN_SERIES:
                 continue

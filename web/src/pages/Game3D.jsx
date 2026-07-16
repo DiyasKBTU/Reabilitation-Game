@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Game3DEngine } from '@game3d/index.js';
-import { bleService } from '../stores/bleStore';
+import { bleService, resetInputStats, getInputSource } from '../stores/bleStore';
 import useSessionStore from '../stores/sessionStore';
 import { api } from '../api/index.js';
 import BlePanel from '../components/BlePanel';
@@ -27,6 +27,12 @@ export default function Game3D() {
   const [started, setStarted] = useState(false);
   const [hud, setHud] = useState({ score: 0, lives: 3, level: 1, combo: 0, challenge: '' });
   const pendingRef = useRef(null); // данные завершённой игры, ожидающие сохранения (для повтора)
+  // Обрыв датчика во время игры: ребёнок должен сразу понять, что случилось и что делать
+  // (клавиатурный fallback всегда активен — игра управляема, но об этом надо сказать).
+  const [sensorLost, setSensorLost] = useState(false);
+  const sensorUsedRef = useRef(false);  // в этой игре был вход с датчика (не только клавиатура)
+  const startedRef = useRef(false);
+  startedRef.current = started;
 
   // Сохранение результата с возможностью повтора: при сбое сети сессия НЕ теряется —
   // данные игры остаются в pendingRef, игрок видит ошибку и может повторить (а не молча уходит).
@@ -43,6 +49,8 @@ export default function Game3D() {
         game_type: data.gameType || 'game2',
         game_name: data.gameName || 'City Driver',
         imu_time_series: data.imuTimeSeries || [],
+        // Датчик или клавиатура — для честной разметки ML-данных на сервере.
+        input_source: getInputSource(),
         // Реакция на препятствия (если были угрозы на курсе) — для аналитики врача.
         performance: (data.reactionMs != null || data.avoidanceRate != null) ? {
           reactionMs: data.reactionMs,
@@ -133,6 +141,8 @@ export default function Game3D() {
   // Подаём BLE-данные в движок
   useEffect(() => {
     const handler = (e) => {
+      // События реального датчика идут без source (клавиатурные помечены 'keyboard').
+      if (!e.detail?.source) sensorUsedRef.current = true;
       const c = e.detail?.calib;
       if (c && engineRef.current) {
         // Управление — по КАЛИБРОВАННОМУ (несглаженному) углу; движок сам сглаживает ОДИН
@@ -146,9 +156,22 @@ export default function Game3D() {
     return () => bleService.removeEventListener('data', handler);
   }, []);
 
+  // Обрыв BLE во время игры → заметный баннер (панель статуса справа слишком незаметна в игре).
+  useEffect(() => {
+    const onDrop = () => { if (startedRef.current && sensorUsedRef.current) setSensorLost(true); };
+    const onBack = () => setSensorLost(false);
+    bleService.addEventListener('disconnected', onDrop);
+    bleService.addEventListener('connected', onBack);
+    return () => {
+      bleService.removeEventListener('disconnected', onDrop);
+      bleService.removeEventListener('connected', onBack);
+    };
+  }, []);
+
   const lives = '❤️'.repeat(Math.max(0, hud.lives)) + '🖤'.repeat(Math.max(0, 3 - hud.lives));
 
   function handleStart() {
+    resetInputStats();   // источник входа считаем с нуля для каждой игры
     engineRef.current?.start();
     setStarted(true);
   }
@@ -169,6 +192,17 @@ export default function Game3D() {
       {saving && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
           <div className="text-white text-lg font-medium">Сохранение результатов...</div>
+        </div>
+      )}
+      {started && sensorLost && !saving && !saveFailed && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 w-[calc(100%-2rem)] max-w-md">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg flex items-start gap-2.5">
+            <AlertTriangleIcon size={18} className="shrink-0 mt-0.5" />
+            <span>
+              <b>Датчик отключился.</b> Игра продолжается на стрелках (← → руль, ↑ ↓ газ/тормоз).
+              Переподключите датчик в панели справа — управление кистью вернётся автоматически.
+            </span>
+          </div>
         </div>
       )}
       {saveFailed && (

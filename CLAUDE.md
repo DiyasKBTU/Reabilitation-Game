@@ -90,7 +90,7 @@ tools/imu-*  →  packages/ble  →  web/ (React)  →  api/ (FastAPI)  →  Mon
 | Область | Команда |
 |---------|---------|
 | ML-паритет (Python ↔ api/app/ml) | `venv\Scripts\python.exe -m pytest ml-service/tests/ -v` |
-| Импорт Firebase (нормализация + ML на частичных) | `venv\Scripts\python.exe -m pytest api/tests/ -v` |
+| Импорт Firebase + сквозные роут-тесты (fake-Mongo, без Docker) | `venv\Scripts\python.exe -m pytest api/tests/ -v` (зависимости: `pip install -r api/requirements-dev.txt`) |
 | ML полный пайплайн | `ml-service/debug-ui/index.html` → пример "Норма" → features.valid=true |
 | BLE без устройства | `packages/game-2d/demo.html` → keyboard fallback должен работать |
 | IMU симулятор | `tools/imu-simulator/` → сгенерировать → "Открыть в ML Debug" |

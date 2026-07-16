@@ -14,12 +14,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Безопасность: с дефолтным JWT-секретом токены подделываемы. Громко предупреждаем —
-    # в проде JWT_SECRET ОБЯЗАН быть задан через окружение (см. config.is_default_secret).
-    if settings.is_default_secret:
+    # Безопасность конфигурации.
+    # В проде (APP_ENV=prod) — fail-fast: приложение НЕ поднимается с небезопасными настройками
+    # (дефолтный/короткий JWT_SECRET, включённый DEMO_MODE). Явный отказ старта лучше, чем тихо
+    # работающий уязвимый сервер с детскими медданными.
+    if settings.is_production:
+        errors = settings.production_security_errors()
+        if errors:
+            raise RuntimeError(
+                "Небезопасная конфигурация при APP_ENV=prod:\n  - "
+                + "\n  - ".join(errors)
+                + "\nИсправьте переменные окружения и перезапустите."
+            )
+    # В dev/staging тех же проблем достаточно предупредить (чтобы не мешать локальной работе).
+    elif settings.is_default_secret:
         logger.warning(
             "JWT_SECRET не задан — используется небезопасный дефолт. "
-            "Для боевого развёртывания задайте JWT_SECRET (мин. 32 случайных символа) в окружении."
+            "Для боевого развёртывания задайте JWT_SECRET (мин. 32 случайных символа) в окружении "
+            "и APP_ENV=prod."
         )
     await connect_db()
     preload_model()

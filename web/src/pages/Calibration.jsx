@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import useBleStore, { bleService } from '../stores/bleStore';
+import useBleStore, { bleService, resetInputStats, getInputSource } from '../stores/bleStore';
 import { api } from '../api/index.js';
 import {
   TargetIcon, BluetoothIcon, CheckCircleIcon, ArrowLeftIcon, ChevronRightIcon,
@@ -33,6 +33,7 @@ export default function Calibration() {
   const [hits, setHits] = useState(0);
   const [times, setTimes] = useState([]);
   const [result, setResult] = useState(null);
+  const [inputSrc, setInputSrc] = useState(null);  // источник входа завершённой калибровки
   const [err, setErr] = useState('');
 
   const rollRef = useRef(0); rollRef.current = roll;
@@ -83,6 +84,7 @@ export default function Calibration() {
 
   function startRom() {
     bleService.zeroNow?.();
+    resetInputStats();   // источник входа считаем с нуля для этой калибровки
     samplesRef.current = []; startRef.current = Date.now();
     setBox({ rMin: 0, rMax: 0, pMin: 0, pMax: 0 });
     recordingRef.current = true;
@@ -107,6 +109,8 @@ export default function Calibration() {
 
   async function finish() {
     recordingRef.current = false;
+    const src = getInputSource();
+    setInputSrc(src);
     const samples = samplesRef.current;
     const metrics = {
       rollMin: Math.round(box.rMin * 10) / 10, rollMax: Math.round(box.rMax * 10) / 10,
@@ -123,6 +127,9 @@ export default function Calibration() {
         duration_sec: samples.length ? samples[samples.length - 1].t / 1000 : 0,
         score: 0, level: 1, is_calibration: true,
         calibration: metrics, imu_time_series: samples,
+        // Сервер примет калибровку как baseline ТОЛЬКО с датчика: клавиатурный прогон
+        // сохранится как тренировочный, но точкой отсчёта прогресса не станет.
+        input_source: src,
       });
       setStep('done');
     } catch (e) {
@@ -153,11 +160,20 @@ export default function Calibration() {
         Измерим диапазон по двум осям и точность наведения — это персональная точка отсчёта.
       </p>
 
-      <div className={`mb-5 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full
+      <div className={`mb-2 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full
         ${connected ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
         <BluetoothIcon size={14} />
         {connected ? 'Датчик подключён' : 'Без датчика — стрелки ← → (наклон) и ↑ ↓ (вперёд/назад)'}
       </div>
+
+      {/* Честное предупреждение: клавиатурная калибровка — только попробовать интерфейс.
+          Сервер не примет её как точку отсчёта (данные не с кисти). */}
+      {!connected && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+          Датчик не подключён — это будет <b>пробный прогон</b>. Он не станет вашей точкой
+          отсчёта: для настоящей калибровки подключите устройство на странице «Устройство».
+        </div>
+      )}
 
       {/* Шаги */}
       {step !== 'intro' && step !== 'done' && step !== 'error' && (
@@ -235,8 +251,14 @@ export default function Calibration() {
           <span className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 mb-3">
             <CheckCircleIcon size={30} />
           </span>
-          <h2 className="text-xl font-bold text-slate-800 mb-1">Калибровка выполнена</h2>
-          <p className="text-sm text-slate-500 mb-5">Персональный профиль движения сохранён.</p>
+          <h2 className="text-xl font-bold text-slate-800 mb-1">
+            {inputSrc === 'ble' ? 'Калибровка выполнена' : 'Пробный прогон завершён'}
+          </h2>
+          <p className="text-sm text-slate-500 mb-5">
+            {inputSrc === 'ble'
+              ? 'Персональный профиль движения сохранён.'
+              : 'Управление было с клавиатуры — результат сохранён как тренировочный. Для настоящей калибровки подключите датчик.'}
+          </p>
 
           <div className="grid grid-cols-2 gap-3 mb-3 text-left">
             <Metric Icon={GaugeIcon} label="Диапазон вбок (roll)" value={`${result.rollRom.toFixed(0)}°`} sub={`${result.rollMin.toFixed(0)}…${result.rollMax.toFixed(0)}°`} />

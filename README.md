@@ -1,20 +1,40 @@
 # Axis
 
-Геймифицированная реабилитационная платформа. Пациент управляет игрой движением кисти (ESP32-C3 + IMU через BLE). Врач получает ML-аналитику движений.
+Реабилитационная платформа для детей с ДЦП. Пациент управляет игрой движением кисти
+(браслет ESP32-C3 + IMU, подключение из браузера по Bluetooth), врач получает
+ML-аналитику движений: амплитуда, плавность, тремор, паттерн, динамика к личной норме.
 
 ```
-ESP32-C3 + IMU  →BLE→  React SPA  →REST→  FastAPI + MongoDB
-                                               └── ML встроен
+ESP32-C3 + IMU  →BLE→  React SPA (web/)  →REST→  FastAPI (api/) + MongoDB
+                                                      └── ML встроен (api/app/ml/)
 ```
+
+---
+
+## Документация — с чего начать
+
+| Документ | Для кого / зачем |
+|----------|------------------|
+| **docs/HOW_IT_WORKS.md** | Для новичка: как всё устроено «на пальцах» — экраны, путь данных, словарь терминов |
+| **docs/TECHNICAL.md** | Для разработчика: архитектура, API, схема БД, ML, учётные данные, запуск |
+| **docs/ML_CONTRACT.md** | Формат данных ML: признаки, аномалия, рекомендации, паттерн, ответ `/api/insights` |
+| **docs/ML_PIPELINE.md** | Регламент «от сырых данных до модели»: роли, ритм, команды, ворота качества и промоута |
+| **docs/DEPLOY.md** | Деплой на прод-сервер (VPS 1 ГБ): docker-compose.prod, swap, HTTPS для BLE |
+| **docs/CHANGELOG.md** | История изменений |
+| **docs/WORK_PLAN.md** | Живой план работ (6-недельный трекинг ML) |
+| **docs/BACKLOG.md** | Известные слабости, баги, возможности |
+| **docs/RISK_REGISTER.md** | Реестр рисков: оценка, владелец, митигация, триггер |
+| **docs/SECURITY.md** | Безопасность и приватность: классификация данных, меры, чек-лист усиления |
+| **docs/RESEARCH_DCP.md** | Доказательная база: формы ДЦП, MACS, литература |
 
 ---
 
 ## Быстрый старт
 
-### Вариант 1 — Docker
+### Вариант 1 — Docker (локальная разработка)
 
 ```bash
-cp api/.env.example api/.env   # заполни JWT_SECRET и ADMIN_PASSWORD
+cp api/.env.example api/.env   # заполни JWT_SECRET (и ADMIN_PASSWORD, если нужен админ)
 docker compose up
 ```
 
@@ -24,9 +44,12 @@ docker compose up
 | Backend API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
 
+> На прод-сервере (слабый VPS) — ТОЛЬКО `docker compose -f docker-compose.prod.yml up -d --build`.
+> Dev-стек кладёт сервер с 1 ГБ RAM (см. docs/DEPLOY.md).
+
 ### Вариант 2 — Вручную
 
-**Требования:** Python 3.10+, Node.js 18+, MongoDB, Chrome/Edge (для BLE)
+**Требования:** Python 3.10+, Node.js 18+, MongoDB, Chrome/Edge (для Web Bluetooth)
 
 ```powershell
 # Terminal 1 — MongoDB
@@ -44,7 +67,27 @@ npm install
 npm run dev                    # → http://localhost:5173
 ```
 
-**Первый вход:** зарегистрируйся через `/register`. Для admin-аккаунта задай `ADMIN_PASSWORD` в `api/.env`.
+### Первый вход
+
+Три пути (подробно — docs/TECHNICAL.md §10):
+
+1. **Самостоятельная регистрация пациента** — `/register` (логин = ИИН ребёнка, 12 цифр).
+2. **Тестовые данные** — засеять базу врачами/пациентами с известными паролями:
+   `venv\Scripts\python.exe api\scripts\seed_test_data.py` (напечатает все логины/пароли:
+   `admin/admin1234`, `doctor1..3/doctor1234`, `patient1..3/patient1234`).
+3. **Демо-режим** — `DEMO_MODE=true` в `api/.env`: на странице входа появятся кнопки
+   «Войти как врач / как пациент» (`demo_doctor` и `demo_patient`, пароль `demo1234`).
+
+---
+
+## Игры
+
+| game_type | Игра | Управление | Технология |
+|-----------|------|-----------|------------|
+| `game1` | Space Catcher — ловить шары платформой | roll (наклон кисти вбок) | Canvas 2D |
+| `game2` | City Driver — вождение с испытаниями | roll = руль, pitch = газ/тормоз | Three.js (WebGL) |
+
+Без устройства обе игры работают от клавиатуры (← →) — для теста и разработки.
 
 ---
 
@@ -52,60 +95,44 @@ npm run dev                    # → http://localhost:5173
 
 ```
 rehabgame/
-├── api/              FastAPI backend (Python)
-│   ├── app/
-│   │   ├── main.py   Точка входа, CORS, lifespan
-│   │   ├── auth/     JWT, bcrypt, deps
-│   │   ├── models/   User, Patient, Session, Score (Beanie)
-│   │   ├── routes/   auth, patients, sessions, insights, leaderboard, profile, admin
-│   │   └── ml/       features.py, anomaly.py, recommendations.py, router.py
-│   └── Dockerfile
-│
-├── web/              React SPA (Vite + Tailwind)
-│   └── src/
-│       ├── stores/   authStore, bleStore (BLE singleton), sessionStore
-│       ├── components/ AppLayout, BlePanel, AnomalyBadge, SessionChart
-│       └── pages/    Login, Register, GameSelect, Game2D, SessionResult,
-│                      PatientList, PatientDetail, Leaderboard, Profile, Admin
-│
-├── packages/         Framework-agnostic ES-модули
-│   ├── ble/          BleService (EventTarget, EMA, keyboard fallback)
-│   └── game-2d/      Game2DEngine (Space Catcher) + demo.html
-│
-├── ml-service/       Обучение модели + тесты паритета + debug-UI
-├── tools/            IMU симулятор и рекордер
-├── docs/             TECHNICAL.md, CHANGELOG.md, ML_CONTRACT.md
-└── docker-compose.yml
+├── api/              FastAPI backend: auth (JWT), данные, ML (api/app/ml/)
+│   └── scripts/      seed_test_data.py (тест-данные), import_firebase.py (импорт истории)
+├── web/              React SPA (Vite + Tailwind + Zustand)
+├── packages/         Framework-agnostic ES-модули (без React/DOM):
+│   ├── ble/          BleService — Web Bluetooth, EMA-фильтр, клавиатурный fallback
+│   ├── game-2d/      Game2DEngine (Space Catcher) + demo.html
+│   └── game-3d/      Game3DEngine (City Driver, Three.js) + demo.html
+├── ml-service/       «Лаборатория» ML: обучение моделей + тесты паритета + debug-UI
+├── tools/            imu-simulator (генератор данных), imu-recorder (запись с BLE → JSON)
+├── docs/             вся документация (карта выше)
+├── docker-compose.yml        dev-стек
+├── docker-compose.prod.yml   прод-стек (nginx-статика, лимиты памяти)
+└── docker-compose.tls.yml    HTTPS-оверлей (Caddy + Let's Encrypt) — нужен для BLE на проде
 ```
-
----
-
-## Архитектура
-
-**BLE singleton** — `bleStore.js` держит один `BleService` на всё время SPA. Соединение не рвётся при навигации между страницами.
-
-**Игровой движок изолирован** — `packages/game-2d/index.js` это чистый класс `Game2DEngine(canvas, opts)`. Принимает canvas снаружи, вызывает `onGameOver(data)` по завершении.
-
-**ML встроен в бэкенд** — `api/app/ml/` содержит тот же код, что `ml-service/`. Отдельный сервис не нужен. Для изолированного тестирования: `POST /api/ml/predict`.
 
 ---
 
 ## Тестирование
 
 ```powershell
-# ML паритет (убедиться что api/app/ml/features.py ≡ ml-service/app/features.py)
+# ML-паритет (api/app/ml/features.py ≡ ml-service/app/features.py)
 venv\Scripts\python.exe -m pytest ml-service/tests/ -v
 
-# Game 2D без backend и BLE
+# Бэкенд: импорт Firebase, паттерн, валидность
+venv\Scripts\python.exe -m pytest api/tests/ -v
+
+# Фронтенд: тесты и сборка
+cd web && npm run test && npm run build
+
+# Игры без бэкенда и BLE (клавиши ← →)
 start packages\game-2d\demo.html
+start packages\game-3d\demo.html
 
 # ML Debug UI (нужен запущенный бэкенд)
 start ml-service\debug-ui\index.html
-
-# Переобучение модели
-cd ml-service
-..\venv\Scripts\python.exe -m app.train
 ```
+
+Полная таблица команд — в `CLAUDE.md` и docs/TECHNICAL.md §7.
 
 ---
 
@@ -116,6 +143,7 @@ cd ml-service
 | `MONGO_URI` | MongoDB connection string |
 | `JWT_SECRET` | Секрет JWT (мин. 32 символа) |
 | `ALLOWED_ORIGINS` | CORS origins через запятую |
-| `ADMIN_PASSWORD` | Пароль admin (пусто = не создавать) |
+| `ADMIN_PASSWORD` | Пароль авто-создаваемого admin (пусто = не создавать) |
+| `DEMO_MODE` | `true` = засев демо-данных + кнопки быстрого входа |
 
-Полный список — `docs/TECHNICAL.md` §6.
+Полный список — docs/TECHNICAL.md §6.

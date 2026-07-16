@@ -1,6 +1,10 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
+
+# Потолок длины сырого ряда: 25 Гц × 2 часа ≈ 180 тыс. сэмплов. Всё, что больше, —
+# либо баг клиента, либо злоупотребление; на VPS с лимитом RAM это защита от OOM.
+MAX_IMU_SAMPLES = 200_000
 
 
 class IMUSample(BaseModel):
@@ -26,6 +30,10 @@ class SessionCreate(BaseModel):
     calibration: Optional[Dict[str, Any]] = None
     # Игровые метрики реакции на препятствия (City Driver): {reactionMs, avoidanceRate, hazardCount}.
     performance: Optional[Dict[str, Any]] = None
+    # Источник управления: датчик/клавиатура/смешанный/не было входа. None — старый клиент.
+    # Клавиатурные сессии сохраняются (история, очки на экране), но НЕ идут в baseline,
+    # рейтинг и ML-обучение — их ряд углов синтезирован, а не снят с кисти.
+    input_source: Optional[Literal["ble", "keyboard", "mixed", "none"]] = None
     imu_time_series: List[Dict[str, Any]] = []
 
 
@@ -49,4 +57,5 @@ class SessionOut(BaseModel):
     performance: Optional[Dict[str, Any]] = None
     label: Optional[Dict[str, Any]] = None
     is_calibration: bool = False
+    input_source: Optional[str] = None
     created_at: datetime

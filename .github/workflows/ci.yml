@@ -1,0 +1,77 @@
+name: CI
+
+# Ворота качества на каждый PR и пуш в main. Гоняет ровно те проверки, что описаны в
+# CLAUDE.md / README (backend-тесты на fake-Mongo, паритет признаков ML, фронт-тесты, сборка).
+# Тесты идут БЕЗ Docker и без реальной MongoDB (api/tests используют mongomock-motor).
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+# Новый пуш в ту же ветку отменяет предыдущий незавершённый прогон.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (API-тесты + паритет ML)
+    runs-on: ubuntu-latest
+    env:
+      # Тот же режим, что и на слабом VPS: numpy/sklearn в один поток (см. docker-compose.prod.yml).
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Установить зависимости (api + ml-service)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r api/requirements-dev.txt
+          pip install -r ml-service/requirements.txt
+
+      - name: Проверка синтаксиса бэкенда
+        run: python -m py_compile api/app/main.py api/app/config.py
+
+      - name: API-тесты (fake-Mongo, без Docker)
+        run: python -m pytest api/tests -q
+
+      # Паритет api/app/ml/features.py ≡ ml-service/app/features.py.
+      # Запускается ОТДЕЛЬНЫМ процессом: пакет `app` есть и в api, и в ml-service —
+      # в одном процессе они конфликтуют (см. CLAUDE.md).
+      - name: Паритет признаков ML
+        run: python -m pytest ml-service/tests -q
+
+  frontend:
+    name: Frontend (vitest + сборка)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Установить зависимости
+        run: npm ci
+
+      - name: Тесты (vitest)
+        run: npm run test
+
+      - name: Сборка (vite build)
+        run: npm run build

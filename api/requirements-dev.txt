@@ -1,0 +1,9 @@
+# Зависимости для тестов (в прод-образ НЕ ставятся — только в локальный venv):
+#   venv\Scripts\python.exe -m pip install -r api/requirements-dev.txt
+-r requirements.txt
+pytest>=8
+pytest-asyncio>=0.24
+httpx>=0.27
+# Фейковая Mongo в памяти: сквозные тесты роутов (api/tests/test_sessions_input_source.py)
+# идут без настоящей БД и Docker.
+mongomock-motor>=0.0.29

@@ -1,6 +1,10 @@
 # ML-контракт — формат данных между frontend и backend
 
-> Актуально: v8.0 (FastAPI backend). ML встроен в `api/app/ml/`, отдельный ml-service не нужен для продакшна.
+> Актуально на 2026-07-11 (v8.6: частотный анализ дрожи, multi-axis, калибровочный baseline,
+> паттерн). ML встроен в `api/app/ml/`, отдельный ml-service не нужен для продакшна.
+> Назначение документа: **точный формат** JSON-структур ML (`features`, `anomaly`,
+> `recommendations`, `pattern`, полный ответ `/api/insights`). Что эти поля значат
+> по-человечески — `HOW_IT_WORKS.md` §7; где они считаются — `TECHNICAL.md` §5.
 
 ---
 
@@ -170,12 +174,15 @@ Firebase без сырого ряда IMU (`features.partial=true`). В этом
 ## 5. ML роутер `/api/ml/*`
 
 Доступен независимо от бэкенда логики — для отладки и тестирования.
+С 2026-07-11 `POST`-эндпоинты требуют авторизацию (`Authorization: Bearer <JWT>` любой роли)
+и ограничивают ряд 200 тыс. сэмплов — защита VPS от анонимной вычислительной нагрузки.
+Локальный debug-UI (`ml-service/debug-ui`) не затронут: он ходит в standalone ml-service.
 
 | Метод | Путь | Вход | Выход |
 |-------|------|------|-------|
 | POST | `/api/ml/features` | `{imuTimeSeries, axis}` | §1 |
 | POST | `/api/ml/predict` | `{features? \| imuTimeSeries?, history, trends, axis}` | `{features, anomaly, recommendations, modelVersion}` |
-| GET | `/api/ml/health` | — | `{model_loaded, model_version, n_train, mode}` |
+| GET | `/api/ml/health` | — (без авторизации) | `{model_loaded, model_version, n_train, mode}` |
 
 **Правило совместимости:** модель может менять значения внутри `anomaly`/`recommendations`, но не структуру ответа.
 

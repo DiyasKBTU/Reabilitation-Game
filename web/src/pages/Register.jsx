@@ -119,6 +119,10 @@ export default function Register() {
         <button type="submit" disabled={loading || !form.consent} className="btn-primary w-full py-2.5">
           {loading ? 'Регистрация...' : 'Зарегистрироваться'}
         </button>
+        {/* Подсказка, почему кнопка неактивна: без согласия форма не отправляется. */}
+        {!form.consent && !loading && (
+          <p className="text-xs text-slate-400 text-center">Отметьте согласие выше, чтобы продолжить</p>
+        )}
       </form>
       <p className="text-center text-sm text-slate-500 mt-4">
         Уже есть аккаунт?{' '}

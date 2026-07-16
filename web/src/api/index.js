@@ -11,6 +11,14 @@ export async function apiFetch(path, opts = {}) {
     ...opts,
   });
   if (!res.ok) {
+    // Протухший/недействительный токен: молча выйти и отправить на вход — иначе пользователь
+    // остаётся «залогиненным» с ошибками на каждой странице. /auth/* не трогаем (401 там —
+    // это просто «неверный пароль», редиректить нельзя).
+    if (res.status === 401 && token && !path.startsWith('/auth/')) {
+      localStorage.removeItem('rg_token');
+      localStorage.removeItem('rg_user');
+      if (!window.location.pathname.startsWith('/login')) window.location.assign('/login');
+    }
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
@@ -68,4 +76,7 @@ export const api = {
   // Тестовые пользователи (создаются админом для проверки/игры, изолированы от реальных)
   createTestUser: (data = {}) => apiFetch('/admin/test-users', { method: 'POST', body: JSON.stringify(data) }),
   deleteTestUser: (id) => apiFetch(`/admin/test-users/${id}`, { method: 'DELETE' }),
+  // Сбор ML-данных: прогресс (счётчики) + выгрузка датасета (без сырого ряда — лёгкий JSON)
+  getDatasetStats: () => apiFetch('/admin/dataset-stats'),
+  exportMlDataset: (params = {}) => apiFetch('/admin/export/ml-dataset?' + new URLSearchParams(params)),
 };

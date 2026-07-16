@@ -47,6 +47,9 @@ services:
       mongo:
         condition: service_healthy
     environment:
+      # Боевое окружение → в app включается fail-fast на небезопасную конфигурацию
+      # (дефолтный/короткий JWT_SECRET, DEMO_MODE=true). См. api/app/config.py.
+      APP_ENV: ${APP_ENV:-production}
       MONGO_URI: mongodb://mongo:27017/rehabgame
       JWT_SECRET: ${JWT_SECRET:?Задайте JWT_SECRET в .env рядом с compose-файлом (мин. 32 символа)}
       # nginx проксирует /api same-origin, CORS почти не нужен; укажите реальный адрес

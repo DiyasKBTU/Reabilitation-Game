@@ -1,16 +1,20 @@
-# RehabGame — Техническая документация
+# Axis (RehabGame) — Техническая документация
 
-> Актуально на 2026-06-30. Стек: FastAPI + MongoDB + React + BLE (ESP32-C3).
+> Актуально на 2026-07-11. Стек: FastAPI + MongoDB + React + BLE (ESP32-C3).
+> Назначение документа: **полная техническая картина для разработчика** — архитектура,
+> API, схема БД, ML, данные и учётки, запуск. Если вы новичок в проекте или в IT —
+> начните с `HOW_IT_WORKS.md`: там то же самое объяснено «на пальцах», с глоссарием.
 
 ### Карта документации (что где искать)
 | Документ | Назначение |
 |----------|-----------|
-| **TECHNICAL.md** (этот) | Полная техническая картина: архитектура, API, схема БД, ML, запуск |
+| **TECHNICAL.md** (этот) | Полная техническая картина: архитектура, API, схема БД, ML, данные, запуск |
+| **HOW_IT_WORKS.md** | То же для новичка: глоссарий, путь движения по системе, экраны и ситуации |
 | **ML_CONTRACT.md** | Контракт ответа ML (признаки, аномалия, паттерн, рекомендации) — формат данных |
+| **DEPLOY.md** | Деплой на прод-сервер (VPS 1 ГБ): prod-компоуз, swap, HTTPS (Caddy) для BLE |
 | **CHANGELOG.md** | История изменений по версиям/датам |
 | **WORK_PLAN.md** | Живой resumable-план (6-недельный трекинг ML): что сделано / что дальше |
 | **BACKLOG.md** | Слабости/баги/возможности — для дальнейших исправлений |
-| **HOW_IT_WORKS.md** | Объяснение «простыми словами» для новичка (глоссарий, путь движения) |
 | **RESEARCH_DCP.md** | Доказательная база ДЦП (формы, MACS, литература) |
 | **ML_SPEC.md** | Историко-референсные ML-заметки (Firebase-схема, LLM-принцип) |
 
@@ -71,10 +75,12 @@ rehabgame/
 │   ├── src/
 │   │   ├── api/          apiFetch + api object (все эндпоинты)
 │   │   ├── stores/       authStore, bleStore (BLE singleton), sessionStore
-│   │   ├── components/   AppLayout, AuthLayout, BlePanel,
-│   │   │                  AnomalyBadge, SessionChart
-│   │   └── pages/        Login, Register, GameSelect, Game2D, Game3D (lazy),
-│   │                      SessionResult, PatientList, PatientDetail,
+│   │   ├── components/   AppLayout, AuthLayout, BlePanel, GameIntro (pre-game экран),
+│   │   │                  AnomalyBadge, SessionChart, MovementTrace, Disclaimer
+│   │   └── pages/        Landing (публичная титульная), Login, Register (пациент, ИИН),
+│   │                      RegisterDoctor (по коду приглашения), GameSelect, Calibration,
+│   │                      Game2D, Game3D (lazy), SessionResult, DeviceSetup,
+│   │                      Dashboard (врач), PatientList, PatientDetail,
 │   │                      Leaderboard, Profile, Admin
 │   ├── vite.config.js    Proxy /api→:8000, алиасы @ble @game2d @game3d, three
 │   └── package.json
@@ -117,7 +123,7 @@ rehabgame/
 |-------|------|------|-------|------|
 | POST | `/auth/register` | `{iin, password, consent, full_name?, diagnosis?, age?, gender?}` (ИИН=логин; email синтезируется, если не задан) | `{access_token, user}` | — (только пациент; медданные → карта `patients`) |
 | POST | `/auth/register-doctor` | `{username, email, password, invite_code, consent}` | `{access_token, user}` | — (роль doctor; только по коду от админа, B2B-онбординг) |
-| POST | `/auth/login` | `{username, password}` (username = ИИН для пациента) | `{access_token, user}` | — |
+| POST | `/auth/login` | `{username, password}` (username = ИИН для пациента) | `{access_token, user}`; 429 при переборе (8 неудач/логин или 30/IP за 15 мин, `auth/ratelimit.py`) | — |
 | GET | `/auth/me` | — | `{id, username, email, role}` | любая |
 
 ### Patients
@@ -133,11 +139,11 @@ rehabgame/
 ### Sessions
 | Метод | Путь | Описание | Роль |
 |-------|------|----------|------|
-| POST | `/sessions` | Сохранить сессию (считает features, гард валидности; `is_calibration=true` → перезапись baseline) | любая |
+| POST | `/sessions` | Сохранить сессию (считает features, гард валидности; `is_calibration=true` → перезапись baseline). Принимает `input_source` (ble/keyboard/mixed/none): не-датчик → без baseline и без записи в рейтинг; ряд > 200 тыс. сэмплов → 422 | любая |
 | GET | `/sessions?patient_id&game_type&limit` | Список сессий | любая |
 | GET | `/sessions/{id}` | Одна сессия | любая |
 | GET | `/sessions/{id}/trace?max_points` | Сырой ряд движения (downsampled) для графика траектории | любая |
-| PATCH | `/sessions/{id}/label` | Добавить метку (боль, усталость) | любая |
+| PATCH | `/sessions/{id}/label` | Добавить метку: пациент — `pain` 0–2, `fatigue` 1–10; врач/админ — ещё `quality` 1–5 (качество выполнения движения: 1 — очень плохо, 5 — отлично; экспертный сигнал, в выгрузку датасета) | любая |
 | GET | `/sessions/calibration/status?game_type&patient_id` | Откалиброван ли пациент в игре (есть ли baseline) | любая |
 
 **Гард качества сессии (`POST /sessions`).** «Пустой прогон» — игру запустили и не
@@ -160,12 +166,14 @@ ROM≈0 и почти нулевыми признаками. Такая сесс
 | Метод | Путь | Описание |
 |-------|------|----------|
 | GET | `/insights/{patient_id}?game_type` | ML-аналитика по последней ВАЛИДНОЙ сессии: признаки, аномалия, рекомендации, нарратив, **паттерн движения** (`pattern`) |
-| GET | `/leaderboard?game_type&limit` | Рейтинг |
+| GET | `/leaderboard?game_type&limit` | Рейтинг. Отдаёт `display_name` (не username: логин пациента = ИИН, светить его нельзя): своё имя + `is_me`, врач видит имена своих пациентов, остальные — псевдоним «Игрок ····XXXX». Тестовые пациенты исключены; `patient_id` — только врачу/админу |
 | GET | `/profile` | Профиль пользователя; для пациента включает медкарту (`patient`: full_name, diagnosis, age, gender) |
 | PATCH | `/profile` | Обновить профиль (email + для пациента — своя медкарта) |
 | GET | `/admin/users` | Все пользователи | admin |
-| PATCH | `/admin/users/{id}` | Изменить роль/доступ | admin |
-| DELETE | `/admin/users/{id}` | Удалить пользователя | admin |
+| PATCH | `/admin/users/{id}` | Изменить роль/доступ (`platform_access=false` теперь реально блокирует вход — проверяется в `get_current_user`; свою учётку админ заблокировать не может) | admin |
+| DELETE | `/admin/users/{id}` | Удалить пользователя: тестовый → каскад (карта+сессии+очки); реальный → удаляется только вход, карта и сессии остаются (медданные ценны) | admin |
+| GET | `/admin/export/ml-dataset?game_type&include_series&skip&limit` | Выгрузка обучающего датасета: сессии реальных пациентов (без тестовых/демо/клавиатурных), признаки + метки + контекст (диагноз/возраст/пол), личность псевдонимизирована (`patient_key`) | admin |
+| GET | `/admin/dataset-stats` | Прогресс сбора ML-данных: реальные пациенты, сессии с датчика/valid, размечено пациентом/врачом, готово к обучению (норма/аномалия по правилу `mongo_loader`) | admin |
 | GET | `/admin/doctor-invites` | Список кодов-приглашений для врачей | admin |
 | POST | `/admin/doctor-invites` | Сгенерировать одноразовый код врача | admin |
 | DELETE | `/admin/doctor-invites/{id}` | Удалить код | admin |
@@ -174,9 +182,9 @@ ROM≈0 и почти нулевыми признаками. Такая сесс
 ### ML (отдельный роутер, можно тестировать изолированно)
 | Метод | Путь | Описание |
 |-------|------|----------|
-| POST | `/ml/features` | Вычислить признаки из IMU time-series |
-| POST | `/ml/predict` | Полный пайплайн: features → anomaly → recommendations |
-| GET | `/ml/health` | Статус модели |
+| POST | `/ml/features` | Вычислить признаки из IMU time-series (требует авторизацию — вычисления не для анонимов) |
+| POST | `/ml/predict` | Полный пайплайн: features → anomaly → recommendations (требует авторизацию) |
+| GET | `/ml/health` | Статус модели (открыт) |
 
 ---
 
@@ -204,6 +212,8 @@ baselines: dict                    # калибровка: {game_type: {session_
 patient_id: ObjectId  doctor_id: ObjectId?  game_type: str  game_name: str
 score: int  max_combo: int  zone_hits: int  duration_sec: float  level: int
 is_calibration: bool               # калибровочная (первая пригодная) сессия → персональный baseline
+input_source: str?                 # "ble"|"keyboard"|"mixed"|"none" — источник управления; None = старый клиент.
+                                   # Не-датчик: сессия хранится, но НЕ идёт в baseline/рейтинг/ML-датасет
 calibration: dict?                 # метрики направляемой калибровки 2 осей: {rollMin/Max/Rom, pitchMin/Max/Rom, targets:{total,hit,avgMs}}
 imu_time_series: [{t, r, p, y}]    # ряд углов, 25 Гц, НЕсглаженный (calib) — покрывает полосу тремора 3–12 Гц
 features: dict?  label: dict?
@@ -319,8 +329,9 @@ created_at: datetime
 
 | Переменная | Описание | По умолчанию |
 |-----------|----------|--------------|
+| `APP_ENV` | Окружение: `dev` \| `staging` \| `prod`. В `prod` — fail-fast на небезопасную конфигурацию (дефолтный/короткий `JWT_SECRET`, `DEMO_MODE=true`) | `dev` |
 | `MONGO_URI` | MongoDB connection string | `mongodb://localhost:27017/rehabgame` |
-| `JWT_SECRET` | Секрет для JWT (мин. 32 символа) | dev-only значение |
+| `JWT_SECRET` | Секрет для JWT (мин. 32 символа; в `prod` обязателен) | dev-only значение |
 | `JWT_EXPIRE_DAYS` | Срок жизни токена | `30` |
 | `ALLOWED_ORIGINS` | CORS origins через запятую | `http://localhost:5173,...` |
 | `ADMIN_USERNAME` | Логин авто-созданного admin | `admin` |
@@ -442,3 +453,64 @@ ble.setInvert({ roll: true });   // исправить зеркальное уп
 | Пациент | `demo_patient` | `demo1234` |
 
 `DEMO_MODE=false` (по умолчанию) — чистая база, без демо-данных и кнопок.
+
+---
+
+## 10. Существующие данные и учётные записи
+
+### 10.1 Происхождение данных (`source`)
+
+Каждый пациент/сессия несёт поле `source` — по нему видно, откуда данные, и можно
+выборочно удалять:
+
+| `source` | Откуда | Признаки | Как удалить |
+|----------|--------|----------|-------------|
+| `None` (нет поля) | Живые данные: реальная регистрация и реальные игры | Полные (сырой ряд 25 Гц) | Только вручную/админкой |
+| `"test"` | `api/scripts/seed_test_data.py` — тест-данные для разработки | Полные (сгенерированный ряд) | `seed_test_data.py --reset` |
+| `"demo"` | `api/app/demo/seed.py` — демо для показа (`DEMO_MODE=true`) | Полные (сгенерированный ряд) | `seed_test_data.py --clear-demo` |
+| `"firebase"` | `api/scripts/import_firebase.py` — импорт истории старого прототипа | **Частичные** (`partial=true`: только ROM/min/max, без сырого ряда) | По `source` в Mongo |
+
+### 10.2 Учётные записи
+
+**Админ.** Создаётся автоматически на старте API из `api/.env`
+(`ADMIN_USERNAME`/`ADMIN_PASSWORD`; пустой пароль = не создавать). На проде — свой
+пароль из серверного `.env`. Скрипт тест-данных дополнительно гарантирует локального
+админа `admin / admin1234` (и перезапишет ему пароль!) — поэтому скрипт **только для
+dev-базы**, на проде не запускать.
+
+**Тест-данные** (`venv\Scripts\python.exe api\scripts\seed_test_data.py`, идемпотентно;
+`--reset` пересоздать). 3 врача × 3–4 ребёнка с ДЦП × 11–13 сессий, `source="test"`:
+
+| Роль | Логин | Пароль | Примечание |
+|------|-------|--------|-----------|
+| Админ | `admin` | `admin1234` | создаёт/обновляет скрипт |
+| Врач | `doctor1` / `doctor2` / `doctor3` | `doctor1234` | Жанна Абаева / Марат Сейтов / Айгуль Бекова |
+| Пациент | `patient1` / `patient2` / `patient3` | `patient1234` | по одному «играющему» пациенту на врача; остальные дети — карточки без учётки |
+
+**Демо-режим** (`DEMO_MODE=true`): `demo_doctor` и `demo_patient`, пароль `demo1234`
+(§9). На прод-сервере демо-режим сейчас включён — эти учётки там живые.
+
+**Реальные пациенты** регистрируются сами: логин = ИИН ребёнка (12 цифр), пароль (ПИН)
+задают при регистрации. Пароли хранятся только как bcrypt-хэш — «посмотреть пароль»
+нельзя, только сбросить (админка или врач выпускает новый ПИН при `create_login`).
+
+⚠️ Все перечисленные пароли — заведомо слабые и известные, это осознанно: они для
+разработки и показа. Не использовать на открытом проде без смены; rate-limiting логина
+пока нет (BACKLOG §2).
+
+### 10.3 Записи с устройства (сырые данные движения)
+
+- **`Session.imu_time_series`** — главное хранилище: несглаженный (calib) ряд углов
+  `[{t, r, p, y}]` с частотой 25 Гц за всю игровую сессию. Пишется при каждом
+  `POST /sessions` и **никогда не удаляется** (правило CLAUDE.md) — это сырьё для
+  будущего обучения моделей. Даже у невалидных сессий (`features.valid=false`) ряд
+  сохраняется — невалидна только аналитика.
+- **`tools/imu-recorder/index.html`** — автономная запись с BLE-устройства в JSON-файл
+  (без бэкенда): для отладки прошивки и набора сырых записей вне игр.
+- **`tools/imu-simulator/index.html`** — генератор синтетических рядов (без устройства).
+- **Mendeley Smartwatch IMU Dataset** (папка `Smartwatch IMU Dataset for Upper-Limb
+  Movement Ana (1)` в корне репо) — открытый датасет запястья (CC BY 4.0), 154 реальные
+  сессии-нормы из него вошли в обучение модели аномалий v7
+  (`ml-service/data/real_data_loader.py`).
+- **Firebase-экспорт** старого прототипа — только агрегаты (ROM/min/max/число движений),
+  сырого ряда там нет; после импорта такие сессии живут с `features.partial=true`.

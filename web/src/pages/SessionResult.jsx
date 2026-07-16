@@ -93,6 +93,9 @@ export default function SessionResult() {
   if (!session) return <div className="flex items-center justify-center h-full"><div className="text-slate-400">Загрузка...</div></div>;
 
   const f = session.features;
+  // Сессия без датчика (клавиатура/смешанно): показатели «движения» синтезированы игрой,
+  // поэтому честно помечаем и не собираем метки боли/усталости (в обучение они не пойдут).
+  const noDevice = session.input_source && session.input_source !== 'ble';
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -117,6 +120,16 @@ export default function SessionResult() {
         </div>
       )}
 
+      {noDevice && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+          {session.input_source === 'mixed'
+            ? <>Во время игры <b>датчик отключался</b> (часть управления — клавиатура) — результат
+               сохранён как тренировочный: он не участвует в рейтинге и не идёт в анализ движений.</>
+            : <>Игра прошла <b>без датчика</b> (клавиатура) — результат сохранён как тренировочный:
+               он не участвует в рейтинге и не идёт в анализ движений.</>}
+        </div>
+      )}
+
       {/* Score */}
       <div className="card p-6 mb-4 text-center">
         <div className="text-5xl font-bold text-blue-600 mb-1">{session.score}</div>
@@ -126,7 +139,10 @@ export default function SessionResult() {
           <span>Время: <b>{session.duration_sec?.toFixed(0)}с</b></span>
           <span>Уровень: <b>{session.level}</b></span>
         </div>
-        {insights?.anomaly && (
+        {/* ML-вердикт и показатели — только для датчиковых сессий: клавиатурный ряд
+            синтезирован игрой, показывать по нему «анализ движений» нечестно (плашка
+            выше уже объяснила, что прогон тренировочный). */}
+        {!noDevice && insights?.anomaly && (
           <div className="mt-3">
             <AnomalyBadge anomaly={insights.anomaly} />
           </div>
@@ -134,7 +150,7 @@ export default function SessionResult() {
       </div>
 
       {/* Features */}
-      {f && f.valid && (
+      {!noDevice && f && f.valid && (
         <div className="card p-4 mb-4">
           <h3 className="font-semibold text-slate-700 mb-3">Показатели движения</h3>
           <MetricRow label="Амплитуда (ROM)" value={f.rom} unit="°" />
@@ -155,7 +171,7 @@ export default function SessionResult() {
       )}
 
       {/* Recommendations */}
-      {insights?.recommendations?.items?.length > 0 && (
+      {!noDevice && insights?.recommendations?.items?.length > 0 && (
         <div className="card p-4 mb-4">
           <h3 className="font-semibold text-slate-700 mb-3">Рекомендации</h3>
           <p className="text-sm text-slate-600 mb-3">{insights.recommendations.focus}</p>
@@ -174,8 +190,9 @@ export default function SessionResult() {
         </div>
       )}
 
-      {/* Оценка самочувствия — ground-truth метки для ML. Удобный тач-ввод, обязателен хотя бы один пункт. */}
-      {saveState !== 'saved' && user?.role === 'patient' && (
+      {/* Оценка самочувствия — ground-truth метки для ML. Удобный тач-ввод, обязателен хотя бы один пункт.
+          Для сессий без датчика не показываем: метка к синтетическому ряду бесполезна для обучения. */}
+      {saveState !== 'saved' && user?.role === 'patient' && !noDevice && (
         <div className="card p-4 mb-4">
           <h3 className="font-semibold text-slate-700 mb-1">Как вы себя чувствуете?</h3>
           <p className="text-xs text-slate-400 mb-4">
@@ -210,7 +227,7 @@ export default function SessionResult() {
         </p>
       )}
 
-      {(f && f.valid) || insights?.recommendations?.items?.length > 0 ? (
+      {!noDevice && ((f && f.valid) || insights?.recommendations?.items?.length > 0) ? (
         <Disclaimer className="mb-4" />
       ) : null}
 

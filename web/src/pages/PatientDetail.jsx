@@ -639,6 +639,7 @@ export default function PatientDetail() {
                     <th className="px-4 py-3 font-medium hidden sm:table-cell">Тремор</th>
                     <th className="px-4 py-3 font-medium hidden md:table-cell">Боль</th>
                     <th className="px-4 py-3 font-medium hidden md:table-cell">Усталость</th>
+                    <th className="px-4 py-3 font-medium" title="Качество выполнения движения: 1 — очень плохо, 5 — отлично. Сохраняется как экспертная метка к сессии.">Оценка врача</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -649,6 +650,9 @@ export default function PatientDetail() {
                         <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                           {new Date(s.created_at).toLocaleDateString('ru')}
                           {s.is_calibration && <span className="ml-2 badge-info" title="Калибровочная сессия — персональная точка старта">старт</span>}
+                          {s.input_source && s.input_source !== 'ble' && (
+                            <span className="ml-2 badge-attention" title="Игра без датчика (клавиатура) — не участвует в аналитике движений">клавиатура</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 font-semibold text-slate-800 tabular-nums">{s.score}</td>
                         <td className="px-4 py-3"><Cell k="rom" v={measuredValue('rom', sf)} /></td>
@@ -663,6 +667,10 @@ export default function PatientDetail() {
                         </td>
                         <td className="px-4 py-3 hidden md:table-cell text-slate-600 tabular-nums">
                           {s.label?.fatigue != null ? `${s.label.fatigue}/10` : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <DoctorQuality session={s}
+                            onSaved={(u) => setSessions((list) => list.map((x) => x.id === u.id ? { ...x, label: u.label } : x))} />
                         </td>
                       </tr>
                     );
@@ -679,6 +687,45 @@ export default function PatientDetail() {
 
 function Chip({ children }) {
   return <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium">{children}</span>;
+}
+
+// Оценка сессии врачом (label.quality 1–5): экспертная метка качества выполнения движения.
+// В обучение аномалий сейчас идут метки пациента (боль/усталость); оценка врача сохраняется
+// в label и уходит в выгрузку датасета (/admin/export/ml-dataset) как экспертный сигнал.
+function DoctorQuality({ session, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const current = session.label?.quality ?? null;
+
+  async function rate(v) {
+    if (saving || v === current) return;
+    setSaving(true);
+    try {
+      const updated = await api.labelSession(session.id, { quality: v });
+      onSaved(updated);
+    } catch {
+      // Транзиентная ошибка: оценка не сохранилась — оставляем как было, врач нажмёт ещё раз.
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div role="group" aria-label="Оценка выполнения врачом"
+         title="Качество выполнения движения: 1 — очень плохо, 5 — отлично"
+         className={`inline-flex gap-1 ${saving ? 'opacity-50' : ''}`}>
+      {[1, 2, 3, 4, 5].map((v) => (
+        <button key={v} type="button" disabled={saving} aria-pressed={current === v}
+          onClick={() => rate(v)}
+          className={`w-6 h-6 rounded text-xs font-semibold border transition-colors ${
+            current === v
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-slate-500 border-slate-200 hover:border-blue-400 hover:text-blue-600'
+          }`}>
+          {v}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function Cell({ k, v }) {

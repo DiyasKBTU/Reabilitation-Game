@@ -42,6 +42,25 @@ const bleService = new BleService({
 bleService.enableKeyboard(3); // клавиатурный fallback всегда активен
 if (calib.neutral) bleService.setOffsets(calib.neutral); // восстановить сохранённую нейтраль
 
+// ─── Учёт источника входа (датчик vs клавиатура) ────────────────────────────
+// Для честной разметки ML-данных: клавиатурные события BleService несут source:"keyboard",
+// события реального датчика — без него. Игры сбрасывают счётчики на старте (resetInputStats)
+// и пишут итог (getInputSource) в сессию как input_source — сервер по нему отделяет
+// настоящие движения кисти от синтетики (baseline, рейтинг, обучение модели).
+const inputStats = { ble: 0, keyboard: 0 };
+
+export function resetInputStats() {
+  inputStats.ble = 0;
+  inputStats.keyboard = 0;
+}
+
+export function getInputSource() {
+  if (inputStats.ble && inputStats.keyboard) return 'mixed';
+  if (inputStats.ble) return 'ble';
+  if (inputStats.keyboard) return 'keyboard';
+  return 'none';
+}
+
 const useBleStore = create((set, get) => ({
   connected: false,
   status: 'Не подключено',
@@ -108,6 +127,9 @@ const useBleStore = create((set, get) => ({
 
 // Подключаем события к стору
 bleService.addEventListener('data', (e) => {
+  // Счётчик источника: клавиатурный fallback помечен source:"keyboard", датчик — нет.
+  if (e.detail?.source === 'keyboard') inputStats.keyboard += 1;
+  else inputStats.ble += 1;
   useBleStore.setState({ lastReading: e.detail });
 });
 bleService.addEventListener('connected', () => {

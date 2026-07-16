@@ -7,13 +7,26 @@ from ..models.patient import Patient
 from ..models.session import Session
 from ..models.score import Score
 from ..auth.deps import get_current_user, verify_patient_access
-from ..schemas.session import SessionCreate, SessionLabelIn, SessionOut
+from ..schemas.session import SessionCreate, SessionLabelIn, SessionOut, MAX_IMU_SAMPLES
 from ..ml.features import extract_features
 from ..ml.games import axis_for_game, secondary_axes_for_game
 from ..ml.validity import mark_validity, is_analyzable
 from ..calibration import ensure_baseline, set_baseline_from_session
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+# Источники входа, чьим данным можно доверять как движению кисти. None — старый клиент
+# без поля (для совместимости считаем датчиком). Клавиатура/смешанный/пустой — синтезированный
+# ряд: сохраняем, но не пускаем в baseline, рейтинг и обучение.
+TRUSTED_INPUT = (None, "ble")
+
+
+def _oid(value, what: str = "Сессия") -> PydanticObjectId:
+    """Невалидный ObjectId в URL — это 404, а не 500 (иначе мусорный id роняет запрос)."""
+    try:
+        return PydanticObjectId(str(value))
+    except Exception:
+        raise HTTPException(404, f"{what} не найдена")
 
 
 def _secondary_features(series, game_type: str):
@@ -43,6 +56,7 @@ def _out(s: Session) -> SessionOut:
         performance=s.performance,
         label=s.label,
         is_calibration=s.is_calibration,
+        input_source=s.input_source,
         created_at=s.created_at,
     )
 
@@ -60,6 +74,10 @@ async def create_session(body: SessionCreate, user: User = Depends(get_current_u
         patient_id = patient.id
     else:
         raise HTTPException(400, "Укажите patient_id")
+
+    # Потолок длины ряда: защита памяти (mem_limit 300M у контейнера) и от мусорных клиентов.
+    if len(body.imu_time_series) > MAX_IMU_SAMPLES:
+        raise HTTPException(422, f"Слишком длинный ряд IMU: максимум {MAX_IMU_SAMPLES} сэмплов")
 
     axis = axis_for_game(body.game_type)
     # mark_validity снимает features.valid у «пустых прогонов» (машина/платформа разбилась
@@ -82,17 +100,23 @@ async def create_session(body: SessionCreate, user: User = Depends(get_current_u
         axis_features=axis_features,
         calibration=body.calibration,
         performance=body.performance,
+        input_source=body.input_source,
     )
     await session.insert()
 
-    sc = Score(patient_id=patient_id, username=user.username,
-               game_type=body.game_type, score=body.score)
-    await sc.insert()
+    # Рейтинг — только «настоящие» игры: клавиатурная сессия несравнимо легче датчика
+    # (нечестный рейтинг), калибровка — не игра (score=0 засорял бы таблицу).
+    if body.input_source in TRUSTED_INPUT and not body.is_calibration:
+        sc = Score(patient_id=patient_id, username=user.username,
+                   game_type=body.game_type, score=body.score)
+        await sc.insert()
 
     # Калибровка. Явная (направляемая, body.is_calibration) → эта сессия ПЕРЕЗАПИСЫВАет baseline
     # (поддержка ре-калибровки, напр. после смены датчика). Иначе — пассивная: первая пригодная
     # сессия в игре становится калибровочной (ensure_baseline идемпотентна).
-    if features and is_analyzable(features):
+    # Гард источника: клавиатурная сессия НИКОГДА не становится точкой отсчёта — иначе
+    # весь дальнейший прогресс пациента считался бы относительно синтетических углов.
+    if features and is_analyzable(features) and body.input_source in TRUSTED_INPUT:
         if body.is_calibration:
             await set_baseline_from_session(patient, session)  # сам выставит is_calibration
         else:
@@ -157,7 +181,7 @@ async def calibration_status(
 
 @router.get("/{sid}", response_model=SessionOut)
 async def get_session(sid: str, user: User = Depends(get_current_user)):
-    s = await Session.get(PydanticObjectId(sid))
+    s = await Session.get(_oid(sid))
     if not s:
         raise HTTPException(404, "Сессия не найдена")
     await verify_patient_access(s.patient_id, user)   # IDOR-гард: сессия чужого пациента недоступна
@@ -170,7 +194,7 @@ async def session_trace(sid: str, max_points: int = Query(150, le=600),
     """Сырой ряд движения сессии (угол во времени) для графика траектории — доказывает,
     что данные настоящие. Равномерный даунсэмпл до max_points, чтобы ответ оставался лёгким.
     Путь /{sid}/trace (два сегмента) не конфликтует с /{sid}."""
-    s = await Session.get(PydanticObjectId(sid))
+    s = await Session.get(_oid(sid))
     if not s:
         raise HTTPException(404, "Сессия не найдена")
     await verify_patient_access(s.patient_id, user)   # IDOR-гард
@@ -195,7 +219,7 @@ async def session_trace(sid: str, max_points: int = Query(150, le=600),
 
 @router.patch("/{sid}/label", response_model=SessionOut)
 async def label_session(sid: str, body: SessionLabelIn, user: User = Depends(get_current_user)):
-    s = await Session.get(PydanticObjectId(sid))
+    s = await Session.get(_oid(sid))
     if not s:
         raise HTTPException(404, "Сессия не найдена")
     await verify_patient_access(s.patient_id, user)   # IDOR-гард: метку ставит только владелец

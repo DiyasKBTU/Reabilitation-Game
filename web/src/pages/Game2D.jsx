@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Game2DEngine } from '@game2d/index.js';
-import { useBleStore, bleService } from '../stores/bleStore';
+import { useBleStore, bleService, resetInputStats, getInputSource } from '../stores/bleStore';
 import useAuthStore from '../stores/authStore';
 import useSessionStore from '../stores/sessionStore';
 import { api } from '../api/index.js';
@@ -24,6 +24,12 @@ export default function Game2D() {
   const [saveFailed, setSaveFailed] = useState(false);
   const [started, setStarted] = useState(false);
   const pendingRef = useRef(null); // данные завершённой игры, ожидающие сохранения (для повтора)
+  // Обрыв датчика во время игры: ребёнок должен сразу понять, что случилось и что делать
+  // (клавиатурный fallback всегда активен — игра управляема, но об этом надо сказать).
+  const [sensorLost, setSensorLost] = useState(false);
+  const sensorUsedRef = useRef(false);  // в этой игре был вход с датчика (не только клавиатура)
+  const startedRef = useRef(false);
+  startedRef.current = started;
 
   // Сохранение результата с возможностью повтора: при сбое сети сессия НЕ теряется —
   // данные игры остаются в pendingRef, игрок видит ошибку и может повторить (а не молча уходит).
@@ -40,6 +46,9 @@ export default function Game2D() {
         game_type: data.gameType || 'game1',
         game_name: data.gameName || 'Space Catcher',
         imu_time_series: data.imuTimeSeries || [],
+        // Датчик или клавиатура: сервер по этому полю отделяет реальные движения кисти
+        // от синтетики (клавиатурные сессии не идут в baseline, рейтинг и обучение).
+        input_source: getInputSource(),
       });
       setLastSession(session);
       // replace: «назад» из результата ведёт к выбору игр, а не перезапускает игру
@@ -74,6 +83,8 @@ export default function Game2D() {
   // Feed BLE data to engine
   useEffect(() => {
     const handler = (e) => {
+      // События реального датчика идут без source (клавиатурные помечены 'keyboard').
+      if (!e.detail?.source) sensorUsedRef.current = true;
       const s = e.detail?.smooth;
       if (s && engineRef.current) {
         // smooth → управление; calib (несглаженный) → запись в ML-ряд (сохраняет тремор)
@@ -84,7 +95,20 @@ export default function Game2D() {
     return () => bleService.removeEventListener('data', handler);
   }, []);
 
+  // Обрыв BLE во время игры → заметный баннер (панель статуса справа слишком незаметна в игре).
+  useEffect(() => {
+    const onDrop = () => { if (startedRef.current && sensorUsedRef.current) setSensorLost(true); };
+    const onBack = () => setSensorLost(false);
+    bleService.addEventListener('disconnected', onDrop);
+    bleService.addEventListener('connected', onBack);
+    return () => {
+      bleService.removeEventListener('disconnected', onDrop);
+      bleService.removeEventListener('connected', onBack);
+    };
+  }, []);
+
   function handleStart() {
+    resetInputStats();   // источник входа считаем с нуля для каждой игры
     engineRef.current?.start();
     setStarted(true);
   }
@@ -105,6 +129,17 @@ export default function Game2D() {
       {saving && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
           <div className="text-white text-lg font-medium">Сохранение результатов...</div>
+        </div>
+      )}
+      {started && sensorLost && !saving && !saveFailed && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 w-[calc(100%-2rem)] max-w-md">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg flex items-start gap-2.5">
+            <AlertTriangleIcon size={18} className="shrink-0 mt-0.5" />
+            <span>
+              <b>Датчик отключился.</b> Игра продолжается на стрелках ← →. Переподключите
+              датчик в панели справа — управление кистью вернётся автоматически.
+            </span>
+          </div>
         </div>
       )}
       {saveFailed && (

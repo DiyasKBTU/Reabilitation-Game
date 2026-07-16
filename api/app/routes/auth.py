@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from beanie import PydanticObjectId
 from datetime import datetime, timezone
 from ..models.user import User
@@ -7,6 +7,7 @@ from ..models.invite import DoctorInvite
 from ..auth.password import hash_password, verify_password
 from ..auth.jwt import create_token
 from ..auth.deps import get_current_user
+from ..auth.ratelimit import client_ip, check_login_allowed, register_failure, register_success
 from ..schemas.auth import RegisterIn, RegisterDoctorIn, LoginIn, TokenOut, UserOut
 from fastapi import Depends
 
@@ -106,10 +107,15 @@ async def register_doctor(body: RegisterDoctorIn):
 
 
 @router.post("/login", response_model=TokenOut)
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request):
+    # Анти-brute-force: ИИН предсказуем, ПИН короткий — без лимита пара перебирается.
+    ip = client_ip(request)
+    check_login_allowed(body.username, ip)
     user = await User.find_one(User.username == body.username)
     if not user or not verify_password(body.password, user.password_hash):
+        register_failure(body.username, ip)
         raise HTTPException(401, "Неверный логин или пароль")
+    register_success(body.username)
     token = create_token(str(user.id), user.role)
     return TokenOut(access_token=token, user=_user_out(user))
 

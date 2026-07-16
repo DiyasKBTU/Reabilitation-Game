@@ -21,6 +21,11 @@ class Session(Document):
     # точность попаданий, среднее время до цели. Считаются на клиенте (Calibration.jsx),
     # т.к. зависят от позиций мишеней/таймингов, не выводимых из сырого ряда. None для обычных сессий.
     calibration: Optional[Dict[str, Any]] = None
+    # Источник управления в сессии: "ble" (датчик) | "keyboard" | "mixed" | "none".
+    # Критично для ML: клавиатурные сессии содержат СИНТЕЗИРОВАННЫЙ ряд углов (см.
+    # game-2d _updateCatcher) — в обучение и baseline их брать нельзя. None = старый клиент
+    # (источник неизвестен, для совместимости трактуется как «возможно датчик»).
+    input_source: Optional[str] = None
     imu_time_series: List[Dict[str, Any]] = Field(default_factory=list)
     features: Optional[Dict[str, Any]] = None
     # Признаки по вторичным осям управления (multi-axis игры, напр. pitch в City Driver):

@@ -21,6 +21,11 @@ node_modules/
 **/node_modules/
 web/dist/
 web/dev.log
+.vite/
+**/.vite/
+
+# ── Scratchpad (локальные заметки/записи, не для репо) ────
+scratchpad/
 
 # ── IDE / OS ─────────────────────────────────────────────
 .DS_Store

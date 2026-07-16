@@ -47,9 +47,13 @@ async def get_insights(
     user: User = Depends(get_current_user),
 ):
     patient = await verify_patient_access(patient_id, user)   # IDOR-гард + загрузка карточки
+    # Аналитика — только по данным датчика: input_source None (старый клиент) или "ble".
+    # Клавиатурные сессии несут синтезированный ряд углов — врач не должен видеть по ним
+    # «показатели движения». $in с None покрывает и отсутствие поля у старых документов.
     sessions = (
         await Session.find(
-            {"patient_id": PydanticObjectId(patient_id), "game_type": game_type}
+            {"patient_id": PydanticObjectId(patient_id), "game_type": game_type,
+             "input_source": {"$in": [None, "ble"]}}
         )
         .sort("-created_at")
         .limit(50)

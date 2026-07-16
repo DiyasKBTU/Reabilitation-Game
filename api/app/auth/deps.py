@@ -19,6 +19,10 @@ async def get_current_user(
     user = await User.get(PydanticObjectId(payload["sub"]))
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден")
+    # Админский тумблер «доступ к платформе»: без этой проверки флаг был бы декоративным —
+    # заблокированный пользователь продолжал бы работать по живому токену.
+    if not user.platform_access:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступ заблокирован администратором")
     return user
 
 
@@ -45,7 +49,12 @@ async def verify_patient_access(patient_id, user: User) -> Patient:
     Поднимает 404, если пациента нет, и 403, если доступа нет. Возвращает объект Patient,
     чтобы вызывающий код не загружал его повторно.
     """
-    p = await Patient.get(PydanticObjectId(str(patient_id)))
+    # Невалидный ObjectId (мусор в URL/теле) — это «не найдено», а не 500 сервера.
+    try:
+        oid = PydanticObjectId(str(patient_id))
+    except Exception:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пациент не найден")
+    p = await Patient.get(oid)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пациент не найден")
     if user.role == "admin":

@@ -11,13 +11,35 @@ export default function Admin() {
   const [copied, setCopied] = useState('');
   const [creatingTest, setCreatingTest] = useState(false);
   const [newCreds, setNewCreds] = useState(null);
+  const [stats, setStats] = useState(null);       // прогресс сбора ML-данных
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     Promise.all([api.getUsers(), api.getDoctorInvites()])
       .then(([us, inv]) => { setUsers(us); setInvites(inv); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+    // Статистика датасета — отдельно: её сбой не должен ронять страницу администрирования.
+    api.getDatasetStats().then(setStats).catch(() => setStats(null));
   }, []);
+
+  // Выгрузка обучающего датасета в файл (без сырого ряда — лёгкий JSON с признаками и метками).
+  async function downloadDataset() {
+    setExporting(true);
+    try {
+      const data = await api.exportMlDataset();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `ml_dataset_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      alert('Не удалось выгрузить датасет: ' + e.message);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function createInvite() {
     try {
@@ -93,6 +115,48 @@ export default function Admin() {
     <div className="p-6">
       <h1 className="text-2xl font-bold text-slate-800 mb-6">Администрирование</h1>
       {error && <p className="text-red-600 mb-4">{error}</p>}
+
+      {/* Сбор ML-данных: прогресс разметки реальных сессий + выгрузка датасета.
+          Счётчики повторяют правило обучения (mongo_loader): видно ровно то, что пойдёт в модель. */}
+      {stats && (
+        <div className="card p-4 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="font-semibold text-slate-800">Сбор ML-данных</h2>
+              <p className="text-xs text-slate-400">
+                Реальные пациенты (тест и демо не считаются), сессии с датчика.
+                {stats.last_session_at && <> Последняя сессия: {new Date(stats.last_session_at).toLocaleDateString('ru')}.</>}
+              </p>
+            </div>
+            <button onClick={downloadDataset} disabled={exporting} className="btn-primary text-sm px-3 py-1.5">
+              {exporting ? 'Выгрузка…' : 'Скачать датасет (JSON)'}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              ['Пациентов', stats.patients_real],
+              ['Сессий с датчика', stats.sessions_ble],
+              ['Пригодных (valid)', stats.sessions_valid],
+              ['Оценил пациент', stats.labeled_by_patient],
+              ['Оценил врач', stats.labeled_by_doctor],
+              ['Готово: норма', stats.train_normal],
+              ['Готово: аномалия', stats.train_anomaly],
+              ['Всего сессий', stats.sessions_total],
+            ].map(([label, v]) => (
+              <div key={label} className="rounded-lg bg-slate-50 px-3 py-2.5">
+                <div className="text-xs text-slate-400">{label}</div>
+                <div className="text-xl font-bold text-slate-800 tabular-nums">{v}</div>
+              </div>
+            ))}
+          </div>
+          {stats.sessions_ble === 0 && (
+            <p className="mt-3 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+              Реальных сессий с датчика пока нет. Данные появятся, когда зарегистрированный (не тестовый)
+              пациент сыграет с подключённым устройством.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Тестовые пользователи — для проверки/игры без влияния на реальных пациентов */}
       <div className="card p-4 mb-6">
