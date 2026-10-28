@@ -184,10 +184,16 @@ docker compose -f docker-compose.prod.yml logs cloudflared | grep -i trycloudfla
 - Остановить только туннель, оставив стек:
   `docker compose -f docker-compose.prod.yml stop cloudflared`
 
-### Вариант B. Домен + Let's Encrypt (Caddy) — постоянный HTTPS ✅ так поднят прод
+### Вариант B. Домен + общий Caddy сервера — постоянный HTTPS ✅ так работает прод
 
-Постоянный адрес, доверенный сертификат, трафик не идёт через третью сторону.
-Конфиг: `docker-compose.tls.yml` + `caddy/Caddyfile`.
+Постоянный адрес, доверенный сертификат Let's Encrypt, трафик не идёт через третью сторону.
+
+Порт 443 на сервере один на все проекты, поэтому HTTPS даёт общий Caddy в `/opt/caddy`
+(контейнер `caddy`). Он не принадлежит ни одному проекту: остановка, обновление или `down`
+нашего стека не задевает соседние сайты, и наоборот. У каждого проекта свой файл с доменом
+в `/opt/caddy/conf/sites/`, наш — `rehabgame.caddy`. `docker-compose.tls.yml` только
+подключает наш web к сети Caddy `edge`. Как устроен сам Caddy — `/opt/caddy/README.md`
+на сервере.
 
 **Проверено на практике (2026-07):**
 - ✅ **Работает: sslip.io** — «домен без регистрации»: `<IP-через-дефисы>.sslip.io`
@@ -196,52 +202,57 @@ docker compose -f docker-compose.prod.yml logs cloudflared | grep -i trycloudfla
 - ❌ **DuckDNS не сработал**: Let's Encrypt при выпуске сертификата делает CAA-проверку
   DNS, и на `duckdns.org` она стабильно падала с SERVFAIL → сертификат не выдавался.
   Не тратить время.
-- ⚠️ DNS-резолвер хостера нестабилен → контейнеру caddy в `docker-compose.tls.yml` уже
-  прописаны публичные DNS `1.1.1.1`/`8.8.8.8` (без этого Caddy не достукивался до
-  Let's Encrypt). Docker-имена (web/api) при этом продолжают резолвиться внутренним DNS.
+- ⚠️ DNS-резолвер хостера нестабилен → общему Caddy в `/opt/caddy/compose.yml` прописаны
+  публичные DNS `1.1.1.1`/`8.8.8.8` (без этого Caddy не достукивался до Let's Encrypt).
+  Docker-имена (rehabgame-web и др.) при этом продолжают резолвиться внутренним DNS.
 
 **Шаг 1. «Завести» домен**
 1. Узнать ПУБЛИЧНЫЙ IP сервера — выполнить НА сервере: `curl -s ifconfig.me`.
 2. Домен = `<IP с дефисами>.sslip.io`. Проверить: `nslookup <домен>` → должен вернуть IP.
 
 IP у VPS обычно статический. Если появится нормальный платный домен ($1–10/год: Cloudflare
-Registrar, Porkbun, Namecheap) — просто заменить `DOMAIN` в `.env`, остальное не меняется.
+Registrar, Porkbun, Namecheap) — просто заменить домен в `/opt/caddy/conf/sites/rehabgame.caddy`
+и сделать reload Caddy (как в шаге 2), остальное не меняется.
 
-**Шаг 2. Поднять HTTPS на сервере** (домен уже должен резолвиться в IP сервера):
+**Шаг 2. Подключить домен к общему Caddy** (домен уже должен резолвиться в IP сервера;
+общий Caddy и сеть `edge` уже должны быть на сервере — `/opt/caddy/README.md`):
 
 ```bash
-# порты 80/443 свободны? (кроме нашего стека ничего не должно слушать — учесть соседний проект)
-sudo ss -tlnp | grep -E ':(80|443)\b'
+# файл с нашим доменом (пример для sslip.io; подставь свой домен)
+cat > /opt/caddy/conf/sites/rehabgame.caddy <<'EOF'
+# rehabgame (Axis): /var/www/axis/rehabgame, контейнер rehabgame-web в сети edge
+203-0-113-7.sslip.io {
+    reverse_proxy rehabgame-web:80
+}
+EOF
 
-# открыть их в файрволе (нужны для Let's Encrypt и HTTPS)
-sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
-
-# домен в .env (пример для sslip.io; подставь свой IP через дефисы)
-echo 'DOMAIN=203-0-113-7.sslip.io' >> .env
-
-# остановить туннель (если запускался) и поднять TLS-оверлей
+# остановить туннель (если запускался) и поднять стек с подключением к edge
 docker compose -f docker-compose.prod.yml stop cloudflared
 docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml up -d
 
+# проверить конфиг Caddy и применить без остановки (соседние сайты не прерываются)
+docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+
 # смотреть, как Caddy получает сертификат (ждём "certificate obtained")
-docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml logs -f caddy
+docker logs -f caddy
 ```
 
 **Проверка:** `curl -I https://<домен>` → HTTP-ответ; открыть в Chrome — замок без
-предупреждений, подключение устройства работает. Порт 8080 наружу можно закрыть
-(`sudo ufw delete allow 8080/tcp`).
+предупреждений, подключение устройства работает. Порт 8080 наружу можно закрыть:
+`WEB_PORT=127.0.0.1:8080` в `.env` и снова `up -d`. Через `ufw` его не закрыть —
+Docker публикует порты в обход ufw.
 
 **Если сертификат не выдался** — по опыту этого сервера, в порядке вероятности:
 домен не резолвится в IP сервера (`nslookup`); порт 443 закрыт (файрвол хостера);
 CAA-проверка падает SERVFAIL (симптом DuckDNS — сменить домен на sslip.io); резолвер
-хостера глючит (лечится `dns: 1.1.1.1` у caddy — уже в компоузе).
+хостера глючит (лечится `dns: 1.1.1.1` у общего Caddy — уже в `/opt/caddy/compose.yml`).
 Caddy повторяет попытки сам — как исправишь причину, подхватит без перезапуска.
 
-**Порт 80 уже занят другим сервером** (частый случай на общем VPS — `ss -tlnp` показывает
-host-nginx на `:80`): не воевать за него. В `docker-compose.tls.yml` публикуется только
-`443:443`, и Caddy выпускает сертификат через **TLS-ALPN-01** (валидация по 443, порт 80 не
-нужен). Тогда в шаге 2 открывать только 443: `sudo ufw allow 443/tcp`. Минус — нет
-автоматического http→https редиректа, поэтому пациентам давать сразу полный `https://…`.
+**Порт 80 на сервере занят host-nginx** соседних проектов: общий Caddy за него не воюет,
+публикует только `443` и выпускает сертификаты через **TLS-ALPN-01** (валидация по 443,
+порт 80 не нужен). Минус — нет автоматического http→https редиректа, поэтому пациентам
+давать сразу полный `https://…`.
 
 ---
 

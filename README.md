@@ -107,7 +107,7 @@ rehabgame/
 ├── docs/             вся документация (карта выше)
 ├── docker-compose.yml        dev-стек
 ├── docker-compose.prod.yml   прод-стек (nginx-статика, лимиты памяти)
-└── docker-compose.tls.yml    HTTPS-оверлей (Caddy + Let's Encrypt) — нужен для BLE на проде
+└── docker-compose.tls.yml    HTTPS-оверлей: подключает web к общему Caddy сервера — нужен для BLE на проде
 ```
 
 ---

@@ -1,57 +1,22 @@
-# Axis — постоянный HTTPS: домен + Let's Encrypt (Caddy). ✅ Так поднят прод.
-# Обычный prod-стек его не подхватывает — включается вторым -f (команда в шаге 4).
+# Axis — постоянный HTTPS через общий Caddy сервера. ✅ Так работает прод.
+# Обычный prod-стек его не подхватывает — включается вторым -f:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml up -d
 #
-# Домен: рабочий вариант без регистрации — sslip.io (<IP-через-дефисы>.sslip.io
-# резолвится сам в этот IP). DuckDNS НЕ использовать: CAA-проверка Let's Encrypt
-# на нём падает SERVFAIL, сертификат не выдаётся (проверено 2026-07).
+# Порт 443 на сервере один на все проекты, поэтому Caddy вынесен в /opt/caddy и ни
+# одному проекту не принадлежит: остановка, обновление или down нашего стека не
+# задевает соседние сайты, и наоборот. Наш домен — в /opt/caddy/conf/sites/rehabgame.caddy
+# (reverse_proxy rehabgame-web:80), сертификат Let's Encrypt выпускает и продлевает
+# общий Caddy. Этот файл только подключает web к его сети edge (подробно: docs/DEPLOY.md, шаг 7B).
 #
-# Отличие от Cloudflare Tunnel: постоянный адрес, доверенный сертификат
-# без предупреждений, трафик НЕ идёт через третью сторону — только твой сервер.
-#
-# Как активировать:
-#   1. Узнать IP сервера (curl -s ifconfig.me) → домен <IP-с-дефисами>.sslip.io
-#      (или свой купленный домен с A-записью на IP).
-#   2. В .env (рядом с compose) добавить строку:  DOMAIN=203-0-113-7.sslip.io
-#   3. Открыть порт 443:  sudo ufw allow 443/tcp
-#      (порт 80 тут занят host-nginx соседнего проекта; Caddy берёт только 443,
-#       сертификат через TLS-ALPN-01 — порт 80 не нужен)
-#   4. Запустить (БЕЗ --profile tunnel — туннель больше не нужен):
-#        docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml up -d
-#      Если туннель был запущен — остановить: docker compose ... stop cloudflared
-#   Caddy сам получит и будет автоматически продлевать сертификат Let's Encrypt.
-#
-# Caddy стоит ПЕРЕД web (nginx): терминирует TLS на 443 и проксирует весь трафик
-# (SPA + /api) на web:80. Порт web (8080) снаружи можно закрыть в файрволе —
-# наружу смотрит только Caddy.
+# Сеть edge создаётся вместе с общим Caddy (/opt/caddy/README.md на сервере). Без неё
+# compose скажет «network edge declared as external, but could not be found».
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    container_name: rehabgame-caddy
-    restart: unless-stopped
-    mem_limit: 64m
-    oom_score_adj: 150
-    # Первый DNS-резолвер хостера (89.35.125.5) нестабилен → даём контейнеру
-    # публичный DNS напрямую, чтобы Caddy стабильно достучался до Let's Encrypt.
-    # Service-имена (web/api) продолжают резолвиться встроенным DNS Docker (127.0.0.11).
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-    ports:
-      # На этом сервере порт 80 уже держит host-nginx соседнего проекта, поэтому
-      # публикуем ТОЛЬКО свободный 443. Сертификат Caddy выпустит через TLS-ALPN-01
-      # (валидация Let's Encrypt по 443), порт 80 не требуется.
-      # Если на другом сервере 80 свободен — можно добавить "80:80" для http→https редиректа.
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data      # сертификаты — переживают пересоздание контейнера
-      - caddy_config:/config
-    environment:
-      DOMAIN: ${DOMAIN:?Задайте DOMAIN в .env (напр. axis.example.com) с A-записью на IP сервера}
-    depends_on:
-      - web
+  web:
+    networks:
+      default:
+      edge:
 
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  edge:
+    external: true
